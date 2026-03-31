@@ -91,7 +91,7 @@ UNINSTALL
 chmod +x /usr/local/bin/uninstall-singbox.sh
 
 # 12. Запуск контейнеров
-echo "[6/6] Запуск контейнеров (сборка может занять 2-3 минуты)..."
+echo "[6/6] Запуск контейнеров (сборка может занять минут 10)..."
 docker-compose up -d
 
 echo ""
