@@ -1,15 +1,11 @@
 {
 	"log": {
-		"disabled": false,
-		"level": "debug",
-		"timestamp": true,
-		"output": "/var/log/sing-box.log"
+		"level": "info",
+		"timestamp": true
 	},
 	"experimental": {
 		"clash_api": {
-			"external_controller": "0.0.0.0:9090",
-			"secret": "",
-			"store_selected": true
+			"external_controller": "0.0.0.0:9090"
 		}
 	},
 	"dns": {
