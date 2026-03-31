@@ -28,6 +28,6 @@ services:
     volumes:
       - ./data:/app/data
       - /opt/singbox-stats:/opt/singbox-stats
-      - /etc/sing-box:/etc/sing-box:ro
+      - /etc/sing-box:/etc/sing-box
     depends_on:
       - sing-box
