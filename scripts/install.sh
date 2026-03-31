@@ -94,11 +94,17 @@ chmod +x /usr/local/bin/uninstall-singbox.sh
 echo "[6/6] Запуск контейнеров (сборка может занять минут 10)..."
 docker-compose up -d
 
+
 echo ""
-echo "=== Установка завершена ==="
-echo ""
-echo "✅ Бот запущен. Проверка: docker logs telegram-bot"
-echo "✅ Статистика трафика обновляется каждые 5 минут"
-echo "✅ Для удаления выполните: uninstall-singbox.sh"
-echo ""
-echo "📱 Бот доступен в Telegram: @$(echo $BOT_TOKEN | cut -d':' -f1)"
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║                 ✅ УСТАНОВКА ЗАВЕРШЕНА                       ║"
+echo "╠══════════════════════════════════════════════════════════════╣"
+echo "║  📁 Конфиги:        /etc/sing-box                           ║"
+echo "║  📊 Статистика:     /opt/singbox-stats/traffic.json         ║"
+echo "║  📜 Скрипты:        /usr/local/bin/traffic_*.sh             ║"
+echo "║  🤖 Бот:            docker logs telegram-bot                ║"
+echo "║  ✅ Статистика трафика обновляется каждые 5 минут           ║"
+echo "║  🧹 Удаление:       uninstall-singbox.sh                    ║"
+echo "║  📱 Бот доступен в Telegram: @f_off_rkn                     ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+
