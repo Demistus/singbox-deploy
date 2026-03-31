@@ -1,0 +1,8 @@
+{
+  "log": {"level": "info"},
+  "experimental": {
+    "clash_api": {"external_controller": "0.0.0.0:9090"}
+  },
+  "inbounds": [],
+  "outbounds": [{"type": "direct", "tag": "direct"}]
+}

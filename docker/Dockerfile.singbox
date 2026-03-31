@@ -1,0 +1,24 @@
+FROM alpine:latest AS builder
+
+RUN apk add --no-cache git curl go gcc musl-dev
+
+WORKDIR /sing-box
+
+RUN git clone --depth 1 --branch v1.13.5 https://github.com/SagerNet/sing-box.git .
+
+RUN CGO_ENABLED=1 go build \
+  -tags with_v2ray_api,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api \
+  -o sing-box \
+  ./cmd/sing-box
+
+FROM alpine:latest
+
+RUN apk add --no-cache ca-certificates tzdata
+
+COPY --from=builder /sing-box/sing-box /usr/local/bin/sing-box
+
+RUN mkdir -p /etc/sing-box /var/lib/sing-box /var/log/sing-box
+
+EXPOSE 443 8443 9090
+
+ENTRYPOINT ["sing-box", "run", "-c", "/etc/sing-box/config.json"]

@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  sing-box:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.singbox
+    container_name: sing-box
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - /etc/sing-box:/etc/sing-box
+      - /var/lib/sing-box:/var/lib/sing-box
+      - /var/log/sing-box:/var/log/sing-box
+      - /dev/net/tun:/dev/net/tun
+
+  bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    container_name: telegram-bot
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - /opt/singbox-stats:/opt/singbox-stats
+      - /etc/sing-box:/etc/sing-box:ro
+    depends_on:
+      - sing-box
