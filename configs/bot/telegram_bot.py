@@ -555,7 +555,14 @@ async def show_user_configs(update_obj):
         is_admin = chat_id in Config.ADMIN_IDS
         edit_func = query.edit_message_text
         answer_func = query.answer
+    elif hasattr(update_obj, 'message') and hasattr(update_obj, 'edit_message_text'):
+        # Это Update с message
+        chat_id = update_obj.message.chat.id
+        is_admin = chat_id in Config.ADMIN_IDS
+        edit_func = update_obj.edit_message_text
+        answer_func = update_obj.answer
     else:
+        # Это просто Update с message
         chat_id = update_obj.chat.id
         is_admin = chat_id in Config.ADMIN_IDS
         edit_func = update_obj.reply_text
@@ -571,6 +578,8 @@ async def show_user_configs(update_obj):
     if not filtered_users:
         keyboard = [[InlineKeyboardButton("🔑 Создать мой конфиг", callback_data="create_my_config")]]
         await edit_func("❌ Нет конфигов", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+        if answer_func:
+            await answer_func()
         return
     
     keyboard = [[InlineKeyboardButton(f"📄 {u['name']}", callback_data=f"config_{u['name']}")] for u in filtered_users]
