@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   sing-box:
     build:
@@ -28,6 +26,7 @@ services:
     volumes:
       - ./data:/app/data
       - /opt/singbox-stats:/opt/singbox-stats
-      - /etc/sing-box:/etc/sing-box
+      - /etc/sing-box:/etc/sing-box:rw
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - sing-box
