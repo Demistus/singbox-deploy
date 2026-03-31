@@ -202,7 +202,7 @@ def get_server_params() -> Dict[str, str]:
     params = {
         'domain': 'jacket.casacam.net',
         'port': '443',
-        'public_key': '',
+        'public_key': 'sGUInZ4epsI4uzQ9CKHWAzwIhG9Cy5P9KTAuzTVmfzg',
         'short_id': '',
         'vless_sni': 'www.microsoft.com',
         'hy2_sni': 'jacket.casacam.net'
