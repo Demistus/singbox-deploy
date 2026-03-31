@@ -321,14 +321,21 @@ def generate_qr_code(data: str) -> BytesIO:
 
 
 async def restart_singbox_server() -> bool:
+    """Отправляет сигнал HUP для перезагрузки конфига"""
     try:
         result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: subprocess.run(['docker', 'restart', 'sing-box'], capture_output=True, text=True, timeout=30)
+            None, 
+            lambda: subprocess.run(
+                ['docker', 'exec', 'sing-box', 'kill', '-HUP', '1'], 
+                capture_output=True, 
+                text=True, 
+                timeout=10
+            )
         )
         if result.returncode == 0:
-            logger.info("sing-box перезапущен")
+            logger.info("sing-box конфиг перезагружен (HUP)")
             return True
-        logger.error(f"Ошибка: {result.stderr}")
+        logger.error(f"Ошибка HUP: {result.stderr}")
         return False
     except Exception as e:
         logger.error(f"Ошибка: {e}")
