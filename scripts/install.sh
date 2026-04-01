@@ -4,11 +4,11 @@ set -e
 echo "=== Установка sing-box + Telegram Bot ==="
 
 # 1. Установка базовых зависимостей
-echo "[1/7] Установка зависимостей..."
+echo "[1/8] Установка зависимостей..."
 apt-get update && apt-get install -y jq nftables
 
 # 2. Установка Docker
-echo "[2/7] Установка Docker..."
+echo "[2/8] Установка Docker..."
 if ! command -v docker &> /dev/null; then
     curl -fsSL https://get.docker.com | sh
     systemctl enable docker
@@ -16,21 +16,21 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # 3. Установка Docker Compose
-echo "[3/7] Установка Docker Compose..."
+echo "[3/8] Установка Docker Compose..."
 if ! command -v docker-compose &> /dev/null; then
     curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
     chmod +x /usr/local/bin/docker-compose
 fi
 
 # 4. Клонирование репозитория
-echo "[4/7] Клонирование репозитория..."
+echo "[4/8] Клонирование репозитория..."
 cd /opt
 rm -rf singbox-deploy
 git clone https://github.com/Demistus/singbox-deploy.git
 cd singbox-deploy
 
 # 5. Запрос переменных
-echo "[5/7] Настройка бота..."
+echo "[5/8] Настройка бота..."
 echo "Введите BOT_TOKEN (получите у @BotFather):"
 read -r BOT_TOKEN </dev/tty
 echo "Введите ADMIN_IDS (ваш Telegram ID):"
@@ -64,7 +64,7 @@ SING_EOF
 fi
 
 # 9. Копирование скриптов
-echo "[6/7] Установка скриптов..."
+echo "[6/8] Установка скриптов..."
 cp scripts/traffic_nft.sh /opt/singbox-stats/traffic_nft.sh
 chmod +x /opt/singbox-stats/traffic_nft.sh
 
@@ -75,8 +75,62 @@ cp /opt/singbox-stats/user_traffic_state.txt /opt/singbox-stats/user_traffic_day
 SNAPSHOT
 chmod +x /opt/singbox-stats/snapshot_day.sh
 
-# 10. Настройка cron
-echo "[7/7] Настройка cron..."
+# 10. Настройка nftables
+echo "[7/8] Настройка nftables..."
+cat > /etc/nftables.conf << 'NFT_EOF'
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table ip filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        
+        ct state established,related accept
+        iif lo accept
+        ip protocol icmp icmp type echo-request accept
+        tcp dport 22 accept
+        tcp dport {80, 443, 8080} accept
+        udp dport 443 accept
+        
+        log prefix "BLOCKED: " limit rate 5/minute
+        reject with icmp type port-unreachable
+    }
+    
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        iifname "docker0" oifname "eth0" accept
+        iifname "br-*" oifname "eth0" accept
+        iifname "eth0" oifname "docker0" ct state established,related accept
+        iifname "eth0" oifname "br-*" ct state established,related accept
+    }
+    
+    chain output {
+        type filter hook output priority filter; policy accept;
+    }
+}
+
+table ip nat {
+    chain prerouting {
+        type nat hook prerouting priority dstnat; policy accept;
+    }
+    
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname "eth0" ip saddr 172.17.0.0/16 masquerade
+        oifname "eth0" ip saddr 172.18.0.0/16 masquerade
+    }
+}
+NFT_EOF
+
+# Применяем nftables
+nft -f /etc/nftables.conf
+systemctl enable nftables
+systemctl restart nftables
+
+# 11. Настройка cron
+echo "[8/8] Настройка cron..."
 cat > /etc/cron.d/singbox-stats << 'CRON'
 # Обновление статистики каждые 5 минут
 */5 * * * * root /opt/singbox-stats/traffic_nft.sh > /opt/singbox-stats/traffic.json 2>&1
@@ -86,7 +140,7 @@ CRON
 chmod 644 /etc/cron.d/singbox-stats
 systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || service cron restart
 
-# 11. Создание скрипта удаления
+# 12. Создание скрипта удаления
 cat > /opt/singbox-deploy/scripts/uninstall-singbox.sh << 'UNINSTALL'
 #!/bin/bash
 echo "=== Удаление sing-box + Telegram Bot ==="
@@ -94,12 +148,14 @@ cd /opt/singbox-deploy 2>/dev/null && docker-compose down 2>/dev/null
 docker rmi singbox-deploy_sing-box singbox-deploy_bot 2>/dev/null
 rm -rf /opt/singbox-deploy /etc/sing-box /var/lib/sing-box /var/log/sing-box /opt/singbox-stats
 rm -f /etc/cron.d/singbox-stats
-nft delete table inet traffic 2>/dev/null
+rm -f /etc/nftables.conf
+nft delete table ip filter 2>/dev/null
+nft delete table ip nat 2>/dev/null
 echo "✅ Удаление завершено"
 UNINSTALL
 chmod +x /opt/singbox-deploy/scripts/uninstall-singbox.sh
 
-# 12. Запуск контейнеров
+# 13. Запуск контейнеров
 echo "Запуск контейнеров (сборка может занять до 10 минут)..."
 docker-compose up -d
 
@@ -109,8 +165,9 @@ echo "║                 ✅ УСТАНОВКА ЗАВЕРШЕНА             
 echo "╠══════════════════════════════════════════════════════════════╣"
 echo "║  📁 Конфиги:        /etc/sing-box                            ║"
 echo "║  📊 Статистика:     /opt/singbox-stats/traffic.json          ║"
+echo "║  🔥 Firewall:       /etc/nftables.conf                       ║"
 echo "║  🤖 Бот:            docker logs telegram-bot                 ║"
 echo "║  ✅ Статистика обновляется каждые 5 минут                    ║"
 echo "║  📅 Дневной снимок: 00:00                                    ║"
-echo "║  🧹 Удаление:/opt/singbox-deploy/scripts/uninstall-singbox.sh ║"
+echo "║  🧹 Удаление:/opt/singbox-deploy/scripts/uninstall-singbox.sh║"
 echo "╚══════════════════════════════════════════════════════════════╝"
