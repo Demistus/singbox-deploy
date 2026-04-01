@@ -40,13 +40,13 @@ NAME, CONFIRM = range(2)
 class Config:
     BOT_TOKEN = os.getenv("BOT_TOKEN", "")
     ADMIN_IDS = [int(id_) for id_ in os.getenv("ADMIN_IDS", "").split(",") if id_]
-    
+
     # Пути
     DATA_DIR = Path("/app/data")
     SINGBOX_CONFIG = Path("/etc/sing-box/config.json")
-    TRAFFIC_STATS_FILE = Path("/opt/singbox-stats/traffic.json")
+    TRAFFIC_SCRIPT = Path("/opt/singbox-stats/traffic_nft.sh")  # Путь к вашему скрипту
     USER_MAPPING_FILE = DATA_DIR / "telegram_users.json"
-    
+
     @classmethod
     def validate(cls):
         if not cls.BOT_TOKEN:
@@ -62,13 +62,13 @@ class FileLock:
     def __init__(self, filepath: Path):
         self.filepath = filepath
         self.fd = None
-    
+
     def __enter__(self):
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
         self.fd = open(self.filepath, 'a')
         fcntl.flock(self.fd.fileno(), fcntl.LOCK_EX)
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.fd:
             fcntl.flock(self.fd.fileno(), fcntl.LOCK_UN)
@@ -147,7 +147,7 @@ def save_users_to_config(users: List[Dict[str, Any]]) -> bool:
     try:
         with open(Config.SINGBOX_CONFIG, 'r') as f:
             config = json.load(f)
-        
+
         for inbound in config.get('inbounds', []):
             if inbound.get('type') == 'vless':
                 inbound['users'] = [
@@ -159,10 +159,10 @@ def save_users_to_config(users: List[Dict[str, Any]]) -> bool:
                     for u in users
                 ]
                 break
-        
+
         with open(Config.SINGBOX_CONFIG, 'w') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
-        
+
         logger.info(f"Сохранено {len(users)} пользователей в конфиг")
         return True
     except Exception as e:
@@ -174,27 +174,42 @@ def load_users() -> list:
     return load_users_from_config()
 
 
-def get_traffic_stats() -> Dict[str, Dict]:
-    if not Config.TRAFFIC_STATS_FILE.exists():
-        return {}
+def get_traffic_stats() -> List[Dict[str, Any]]:
+    """Получает статистику из bash скрипта"""
     try:
-        with open(Config.TRAFFIC_STATS_FILE, 'r') as f:
-            data = json.load(f)
-            return {item['user']: item for item in data}
+        result = subprocess.run(
+            [str(Config.TRAFFIC_SCRIPT)],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            logger.error(f"Traffic script error: {result.stderr}")
+            return []
+
+        # Парсим JSON из вывода
+        data = json.loads(result.stdout)
+        logger.info(f"Loaded traffic stats for {len(data)} users")
+        return data
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error: {e}\nOutput: {result.stdout}")
+        return []
     except Exception as e:
-        logger.error(f"Ошибка чтения статистики: {e}")
-        return {}
+        logger.error(f"Error getting traffic stats: {e}")
+        return []
 
 
-def format_bytes(bytes: int) -> str:
-    if bytes < 1024:
-        return f"{bytes} B"
-    elif bytes < 1024 * 1024:
-        return f"{bytes / 1024:.1f} KB"
-    elif bytes < 1024 * 1024 * 1024:
-        return f"{bytes / (1024 * 1024):.1f} MB"
-    else:
-        return f"{bytes / (1024 * 1024 * 1024):.2f} GB"
+def format_bytes(bytes_num: int) -> str:
+    """Форматирование байтов в читаемый вид"""
+    if bytes_num == 0:
+        return "0 B"
+
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if bytes_num < 1024.0:
+            return f"{bytes_num:.2f} {unit}"
+        bytes_num /= 1024.0
+    return f"{bytes_num:.2f} PB"
 
 
 def get_server_params() -> Dict[str, str]:
@@ -323,11 +338,11 @@ async def restart_singbox_server() -> bool:
     """Отправляет сигнал HUP для перезагрузки конфига"""
     try:
         result = await asyncio.get_event_loop().run_in_executor(
-            None, 
+            None,
             lambda: subprocess.run(
-                ['docker', 'exec', 'sing-box', 'kill', '-HUP', '1'], 
-                capture_output=True, 
-                text=True, 
+                ['docker', 'exec', 'sing-box', 'kill', '-HUP', '1'],
+                capture_output=True,
+                text=True,
                 timeout=10
             )
         )
@@ -389,23 +404,23 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
     bot = context.bot
     chat_id = query.message.chat_id
     platform, username = query.data.replace("config_", "").split("_", 1)
-    
+
     users = load_users_from_config()
     user = next((u for u in users if u.get('name') == username), None)
     if not user:
         await query.message.edit_text("❌ Пользователь не найден", parse_mode='HTML')
         return
-    
+
     user_uuid = user['uuid']
     password = user['password']
     client_config = generate_client_config(username, user_uuid, password, platform)
-    
+
     import time
     timestamp = int(time.time())
     send_file = Config.DATA_DIR / f"{username}_{platform}_{timestamp}.json"
     with open(send_file, 'w') as f:
         json.dump(client_config, f, indent=2, ensure_ascii=False)
-    
+
     with open(send_file, 'rb') as f:
         await bot.send_document(
             chat_id=chat_id,
@@ -425,15 +440,15 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
                     f"4. Нажмите для подключения",
             parse_mode='HTML'
         )
-    
+
     vless_qr = generate_qr_code(generate_vless_link(username, user_uuid))
     hysteria_qr = generate_qr_code(generate_hysteria_link(username, password))
-    
+
     await bot.send_photo(chat_id=chat_id, photo=vless_qr,
                          caption=f"📱 <b>QR-код VLESS</b> для {username}", parse_mode='HTML')
     await bot.send_photo(chat_id=chat_id, photo=hysteria_qr,
                          caption=f"📱 <b>QR-код Hysteria2</b> для {username}", parse_mode='HTML')
-    
+
     send_file.unlink()
     context.user_data.pop('waiting_for_platform', None)
 
@@ -450,7 +465,7 @@ async def send_existing_config(query, context, username):
 async def show_menu(bot, chat_id: int, user_id: int):
     keyboard = [
         [InlineKeyboardButton("📱 Мои конфиги", callback_data="my_configs")],
-        [InlineKeyboardButton("📊 Мой трафик", callback_data="show_traffic")],
+        [InlineKeyboardButton("📊 Мой трафик", callback_data="show_my_traffic")],  # Изменено
         [InlineKeyboardButton("🔑 Создать мой конфиг", callback_data="create_my_config")],
         [InlineKeyboardButton("ℹ️ Информация о сервере", callback_data="server_info")],
         [InlineKeyboardButton("❓ Помощь", callback_data="help")]
@@ -460,8 +475,8 @@ async def show_menu(bot, chat_id: int, user_id: int):
             InlineKeyboardButton("➕ Добавить пользователя", callback_data="add_user"),
             InlineKeyboardButton("🗑️ Удалить пользователя", callback_data="delete_user")
         ])
-        keyboard.append([InlineKeyboardButton("📊 Статистика трафика", callback_data="admin_traffic")])
-    
+        keyboard.append([InlineKeyboardButton("📊 Статистика всех пользователей", callback_data="show_total_traffic")])  # Изменено
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = "📱 <b>Главное меню</b>\n\nВыберите действие:"
     await bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML', reply_markup=reply_markup)
@@ -512,7 +527,7 @@ async def create_my_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = re.sub(r'[^a-zA-Z0-9_\-]', '_', username)[:20]
     if username and username[0].isdigit():
         username = f"user_{username}"
-    
+
     existing_username = get_user_by_telegram_id(user_id)
     if existing_username:
         users = load_users_from_config()
@@ -522,24 +537,24 @@ async def create_my_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         else:
             delete_user_mapping(user_id)
-    
+
     users = load_users_from_config()
     base_username = username
     counter = 1
     while any(u.get('name') == username for u in users):
         username = f"{base_username}_{counter}"
         counter += 1
-    
+
     user_uuid = str(uuid.uuid4())
     password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
     user_info = {'name': username, 'uuid': user_uuid, 'password': password}
-    
+
     status_msg = await query.message.reply_text("🔄 <b>Создаем конфиг...</b>", parse_mode='HTML')
     success, error_msg = await add_user_operation(user_info)
     if not success:
         await status_msg.edit_text(f"❌ <b>Ошибка:</b>\n<code>{error_msg}</code>", parse_mode='HTML')
         return
-    
+
     await restart_singbox_server()
     save_user_mapping(user_id, username)
     await status_msg.delete()
@@ -555,32 +570,30 @@ async def show_user_configs(update_obj):
         edit_func = query.edit_message_text
         answer_func = query.answer
     elif hasattr(update_obj, 'message') and hasattr(update_obj, 'edit_message_text'):
-        # Это Update с message
         chat_id = update_obj.message.chat.id
         is_admin = chat_id in Config.ADMIN_IDS
         edit_func = update_obj.edit_message_text
         answer_func = update_obj.answer
     else:
-        # Это просто Update с message
         chat_id = update_obj.chat.id
         is_admin = chat_id in Config.ADMIN_IDS
         edit_func = update_obj.reply_text
         answer_func = None
-    
+
     users = load_users_from_config()
     if is_admin:
         filtered_users = users
     else:
         user_name = get_user_by_telegram_id(chat_id)
         filtered_users = [u for u in users if u.get('name') == user_name] if user_name else []
-    
+
     if not filtered_users:
         keyboard = [[InlineKeyboardButton("🔑 Создать мой конфиг", callback_data="create_my_config")]]
         await edit_func("❌ Нет конфигов", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
         if answer_func:
             await answer_func()
         return
-    
+
     keyboard = [[InlineKeyboardButton(f"📄 {u['name']}", callback_data=f"config_{u['name']}")] for u in filtered_users]
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")])
     text = "📱 <b>Ваши конфиги:</b>" if not is_admin else "📱 <b>Все конфиги:</b>"
@@ -633,32 +646,95 @@ async def show_help(update):
         await update.message.reply_text(help_text, parse_mode='HTML')
 
 
-async def show_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает трафик пользователя"""
+async def show_my_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает трафик текущего пользователя"""
     user_id = query.from_user.id
-    send_func = query.message.edit_text
     await query.answer()
-    
-    is_admin = user_id in Config.ADMIN_IDS
+
     username = get_user_by_telegram_id(user_id)
+    if not username:
+        await query.message.edit_text(
+            "❌ У вас нет активного конфига.\nСоздайте его через 'Создать мой конфиг'",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔑 Создать конфиг", callback_data="create_my_config")]])
+        )
+        return
+
     stats = get_traffic_stats()
-    
-    show_admin = query.data == "admin_traffic"
-    
-    if is_admin and show_admin:
-        if not stats:
-            await send_func("📊 <b>Статистика</b>\n\nНет данных", parse_mode='HTML')
-            return
-        text = "📊 <b>Статистика трафика</b>\n\n"
-        for user, data in sorted(stats.items(), key=lambda x: x[1].get('total', 0), reverse=True):
-            text += f"👤 <b>{user}</b>\n  📤 {format_bytes(data.get('upload',0))}\n  📥 {format_bytes(data.get('download',0))}\n\n"
-        await send_func(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
-    elif username and username in stats:
-        data = stats[username]
-        text = f"📊 <b>Ваш трафик</b>\n\n👤 {username}\n📤 {format_bytes(data.get('upload',0))}\n📥 {format_bytes(data.get('download',0))}"
-        await send_func(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
+
+    # Ищем статистику для пользователя
+    user_stats = next((s for s in stats if s.get('user') == username), None)
+
+    if user_stats:
+        total_up = user_stats.get('total_upload', 0)
+        total_down = user_stats.get('total_download', 0)
+        day_up = user_stats.get('day_upload', 0)
+        day_down = user_stats.get('day_download', 0)
+
+        text = f"📊 <b>Ваш трафик</b>\n\n"
+        text += f"👤 <b>{username}</b>\n"
+        text += f"📤 <b>За день:</b> {format_bytes(day_up)}\n"
+        text += f"📥 <b>За день:</b> {format_bytes(day_down)}\n"
+        text += f"📈 <b>Всего отправлено:</b> {format_bytes(total_up)}\n"
+        text += f"📉 <b>Всего получено:</b> {format_bytes(total_down)}\n"
+        text += f"📊 <b>Общий трафик:</b> {format_bytes(total_up + total_down)}"
     else:
-        await send_func("❌ Нет статистики", parse_mode='HTML')
+        text = f"📊 <b>Ваш трафик</b>\n\n👤 {username}\n📊 Нет данных о трафике"
+
+    await query.message.edit_text(
+        text,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
+    )
+
+
+async def show_total_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику всех пользователей (только для админов)"""
+    user_id = query.from_user.id
+    await query.answer()
+
+    # Проверка прав администратора
+    if user_id not in Config.ADMIN_IDS:
+        await query.message.edit_text(
+            "❌ Доступ запрещен. Только для администраторов.",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
+        )
+        return
+
+    stats = get_traffic_stats()
+
+    if not stats:
+        await query.message.edit_text(
+            "📊 <b>Статистика трафика</b>\n\nНет данных о трафике",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
+        )
+        return
+
+    text = "📊 <b>Статистика трафика всех пользователей</b>\n\n"
+
+    # Сортируем по общему трафику (upload + download)
+    sorted_stats = sorted(stats, key=lambda x: x.get('total_upload', 0) + x.get('total_download', 0), reverse=True)
+
+    for user_data in sorted_stats:
+        username = user_data.get('user', 'Unknown')
+        total_up = user_data.get('total_upload', 0)
+        total_down = user_data.get('total_download', 0)
+        day_up = user_data.get('day_upload', 0)
+        day_down = user_data.get('day_download', 0)
+
+        text += f"👤 <b>{username}</b>\n"
+        text += f"  📤 За день: {format_bytes(day_up)}\n"
+        text += f"  📥 За день: {format_bytes(day_down)}\n"
+        text += f"  📈 Всего: {format_bytes(total_up + total_down)}\n"
+        text += "─" * 25 + "\n"
+
+    await query.message.edit_text(
+        text,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
+    )
 
 
 async def add_user_start(update, context):
@@ -722,7 +798,16 @@ async def confirm_add_user(update, context):
     await restart_singbox_server()
     await status_msg.delete()
     await bot.send_message(chat_id=chat_id, text=f"✅ <b>Пользователь {username} добавлен!</b>", parse_mode='HTML')
-    await send_client_config_to_user(query, context, username, user_info['uuid'], user_info['password'])
+
+    # Создаем фейковый query для отправки конфига
+    class FakeQuery:
+        def __init__(self, message):
+            self.message = message
+        async def answer(self):
+            pass
+
+    fake_query = FakeQuery(query.message)
+    await send_client_config_to_user(fake_query, context, username, user_info['uuid'], user_info['password'])
     return ConversationHandler.END
 
 
@@ -804,15 +889,15 @@ async def cancel_operation(update, context):
 async def handle_callback(update, context):
     query = update.callback_query
     await query.answer()
-    
+
     if query.data == "my_configs":
         await show_user_configs(query)
     elif query.data == "create_my_config":
         await create_my_config(update, context)
-    elif query.data == "show_traffic":
-        await show_traffic(query, context)
-    elif query.data == "admin_traffic":
-        await show_traffic(query, context)
+    elif query.data == "show_my_traffic":
+        await show_my_traffic(query, context)
+    elif query.data == "show_total_traffic":
+        await show_total_traffic(query, context)
     elif query.data.startswith("config_android_") or query.data.startswith("config_ios_"):
         await send_config_by_platform(update, context)
     elif query.data == "server_info":
@@ -841,7 +926,7 @@ async def handle_message(update, context):
     if text == '/my_configs':
         await show_user_configs(update.message)
     else:
-        await update.message.reply_text("Используйте /menu для доступа к меню")
+        await update.message.reply_text("Используйте /start для доступа к меню")
 
 
 def main():
@@ -849,7 +934,7 @@ def main():
     from telegram.request import HTTPXRequest
     request = HTTPXRequest(connect_timeout=60.0, read_timeout=60.0, write_timeout=60.0, pool_timeout=60.0)
     application = Application.builder().token(Config.BOT_TOKEN).request(request).build()
-    
+
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_user_start, pattern='^add_user$')],
         states={
@@ -860,17 +945,18 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_operation)],
         allow_reentry=True
     )
-    
+
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
+
     logger.info("🚀 Бот запущен!")
     application.run_polling()
 
 
 if __name__ == '__main__':
     main()
+
