@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH=$PATH:/usr/sbin:/usr/local/sbin
 
 MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
 TEMP_FILE="/tmp/ip_user_freq.txt"
@@ -71,10 +72,10 @@ for ip in "${!IP_TO_USER[@]}"; do
 done
 
 # nft таблица
-nft add table inet traffic 2>/dev/null
+/usr/sbin/nft add table inet traffic 2>/dev/null
 
 # Получаем существующие chain
-mapfile -t EXISTING_CHAINS < <(nft list table inet traffic 2>/dev/null | grep -oP 'chain \K[^ ]+')
+mapfile -t EXISTING_CHAINS < <(/usr/sbin/nft list table inet traffic 2>/dev/null | grep -oP 'chain \K[^ ]+')
 
 # Нужные chain
 declare -A NEEDED_CHAINS
@@ -88,7 +89,7 @@ done
 
 # Удаляем лишние
 for chain in "${EXISTING_CHAINS[@]}"; do
-    [[ -z "${NEEDED_CHAINS[$chain]}" ]] && nft delete chain inet traffic "$chain" 2>/dev/null
+    [[ -z "${NEEDED_CHAINS[$chain]}" ]] && /usr/sbin/nft delete chain inet traffic "$chain" 2>/dev/null
 done
 
 # Загружаем прошлое состояние для общей статистики
@@ -112,24 +113,24 @@ for ip in "${!IP_TO_USER[@]}"; do
     chain_out="traffic_out_${user}_${ip//./_}"
 
     # chain + rule IN
-    if ! nft list chain inet traffic "$chain_in" >/dev/null 2>&1; then
-        nft add chain inet traffic "$chain_in" '{ type filter hook input priority 0; policy accept; }'
+    if ! /usr/sbin/nft list chain inet traffic "$chain_in" >/dev/null 2>&1; then
+        /usr/sbin/nft add chain inet traffic "$chain_in" '{ type filter hook input priority 0; policy accept; }'
     fi
-    if ! nft list chain inet traffic "$chain_in" | grep -q "ip saddr $ip"; then
-        nft add rule inet traffic "$chain_in" ip saddr "$ip" counter
+    if ! /usr/sbin/nft list chain inet traffic "$chain_in" | grep -q "ip saddr $ip"; then
+        /usr/sbin/nft add rule inet traffic "$chain_in" ip saddr "$ip" counter
     fi
 
     # chain + rule OUT
-    if ! nft list chain inet traffic "$chain_out" >/dev/null 2>&1; then
-        nft add chain inet traffic "$chain_out" '{ type filter hook output priority 0; policy accept; }'
+    if ! /usr/sbin/nft list chain inet traffic "$chain_out" >/dev/null 2>&1; then
+        /usr/sbin/nft add chain inet traffic "$chain_out" '{ type filter hook output priority 0; policy accept; }'
     fi
-    if ! nft list chain inet traffic "$chain_out" | grep -q "ip daddr $ip"; then
-        nft add rule inet traffic "$chain_out" ip daddr "$ip" counter
+    if ! /usr/sbin/nft list chain inet traffic "$chain_out" | grep -q "ip daddr $ip"; then
+        /usr/sbin/nft add rule inet traffic "$chain_out" ip daddr "$ip" counter
     fi
 
     # читаем
-    upload=$(nft list chain inet traffic "$chain_in" | grep "ip saddr $ip" | grep -oP 'bytes \K[0-9]+' | head -1)
-    download=$(nft list chain inet traffic "$chain_out" | grep "ip daddr $ip" | grep -oP 'bytes \K[0-9]+' | head -1)
+    upload=$(/usr/sbin/nft list chain inet traffic "$chain_in" | grep "ip saddr $ip" | grep -oP 'bytes \K[0-9]+' | head -1)
+    download=$(/usr/sbin/nft list chain inet traffic "$chain_out" | grep "ip daddr $ip" | grep -oP 'bytes \K[0-9]+' | head -1)
 
     upload=${upload:-0}
     download=${download:-0}
@@ -176,12 +177,10 @@ done
 echo
 echo "]"
 
-# === СОХРАНЯЕМ НОВУЮ ДНЕВНУЮ СТАТИСТИКУ (опционально, если нужно обновлять) ===
-# Если вы хотите обновлять дневную статистику после каждого запуска, раскомментируйте:
-
- > "$DAY_STATE_FILE"
- for user in "${!USER_UPLOAD[@]}"; do
-     echo "$user:${USER_UPLOAD[$user]}:${USER_DOWNLOAD[$user]}" >> "$DAY_STATE_FILE"
- done
+# === СОХРАНЯЕМ НОВУЮ ДНЕВНУЮ СТАТИСТИКУ ===
+> "$DAY_STATE_FILE"
+for user in "${!USER_UPLOAD[@]}"; do
+    echo "$user:${USER_UPLOAD[$user]}:${USER_DOWNLOAD[$user]}" >> "$DAY_STATE_FILE"
+done
 
 rm -f "$TEMP_FILE" "$TEMP_FILE.sorted"
