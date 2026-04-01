@@ -44,7 +44,6 @@ class Config:
     # Пути
     DATA_DIR = Path("/app/data")
     SINGBOX_CONFIG = Path("/etc/sing-box/config.json")
-    TRAFFIC_SCRIPT = Path("/opt/singbox-stats/traffic_nft.sh")  # Путь к вашему скрипту
     USER_MAPPING_FILE = DATA_DIR / "telegram_users.json"
 
     @classmethod
@@ -175,30 +174,17 @@ def load_users() -> list:
 
 
 def get_traffic_stats() -> List[Dict[str, Any]]:
-    """Получает статистику из bash скрипта"""
+    """Читает статистику из файла traffic.json"""
+    stats_file = Path("/opt/singbox-stats/traffic.json")
+    if not stats_file.exists():
+        return []
     try:
-        result = subprocess.run(
-            [str(Config.TRAFFIC_SCRIPT)],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        if result.returncode != 0:
-            logger.error(f"Traffic script error: {result.stderr}")
-            return []
-
-        # Парсим JSON из вывода
-        data = json.loads(result.stdout)
-        logger.info(f"Loaded traffic stats for {len(data)} users")
-        return data
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}\nOutput: {result.stdout}")
-        return []
+        with open(stats_file, 'r') as f:
+            data = json.load(f)
+            return data
     except Exception as e:
-        logger.error(f"Error getting traffic stats: {e}")
+        logger.error(f"Ошибка чтения статистики: {e}")
         return []
-
 
 def format_bytes(bytes_num: int) -> str:
     """Форматирование байтов в читаемый вид"""
