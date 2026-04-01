@@ -4,9 +4,21 @@ export PATH=$PATH:/usr/sbin:/usr/local/sbin
 MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
 TEMP_FILE="/tmp/ip_user_freq.txt"
 STATE_FILE="/opt/singbox-stats/user_traffic_state.txt"
+DAY_STATE_FILE="/opt/singbox-stats/user_traffic_day.txt"
 
 # Собираем логи
 mapfile -t LOGS < <(docker logs sing-box --tail 5000 2>&1)
+
+declare -A DAY_UPLOAD
+declare -A DAY_DOWNLOAD
+
+# === ЗАГРУЖАЕМ ДНЕВНУЮ СТАТИСТИКУ ДО ВСЕХ ВЫЧИСЛЕНИЙ ===
+if [[ -f "$DAY_STATE_FILE" ]]; then
+    while IFS=":" read -r user up down; do
+        DAY_UPLOAD["$user"]="$up"
+        DAY_DOWNLOAD["$user"]="$down"
+    done < "$DAY_STATE_FILE"
+fi
 
 # Собираем ID -> IP
 declare -A ID_TO_IP
@@ -63,7 +75,7 @@ done
 nft add table inet traffic 2>/dev/null
 
 # Получаем существующие chain
-mapfile -t EXISTING_CHAINS < <(nft list chains inet traffic 2>/dev/null | grep -oP 'chain \K[^ ]+')
+mapfile -t EXISTING_CHAINS < <(nft list table inet traffic 2>/dev/null | grep -oP 'chain \K[^ ]+')
 
 # Нужные chain
 declare -A NEEDED_CHAINS
@@ -80,7 +92,7 @@ for chain in "${EXISTING_CHAINS[@]}"; do
     [[ -z "${NEEDED_CHAINS[$chain]}" ]] && nft delete chain inet traffic "$chain" 2>/dev/null
 done
 
-# Загружаем прошлое состояние
+# Загружаем прошлое состояние для общей статистики
 declare -A PREV_UPLOAD
 declare -A PREV_DOWNLOAD
 
@@ -102,7 +114,7 @@ for ip in "${!IP_TO_USER[@]}"; do
 
     # chain + rule IN
     if ! nft list chain inet traffic "$chain_in" >/dev/null 2>&1; then
-        nft add chain inet traffic "$chain_in" { type filter hook input priority 0\; policy accept\; }
+        nft add chain inet traffic "$chain_in" '{ type filter hook input priority 0; policy accept; }'
     fi
     if ! nft list chain inet traffic "$chain_in" | grep -q "ip saddr $ip"; then
         nft add rule inet traffic "$chain_in" ip saddr "$ip" counter
@@ -110,7 +122,7 @@ for ip in "${!IP_TO_USER[@]}"; do
 
     # chain + rule OUT
     if ! nft list chain inet traffic "$chain_out" >/dev/null 2>&1; then
-        nft add chain inet traffic "$chain_out" { type filter hook output priority 0\; policy accept\; }
+        nft add chain inet traffic "$chain_out" '{ type filter hook output priority 0; policy accept; }'
     fi
     if ! nft list chain inet traffic "$chain_out" | grep -q "ip daddr $ip"; then
         nft add rule inet traffic "$chain_out" ip daddr "$ip" counter
@@ -127,23 +139,24 @@ for ip in "${!IP_TO_USER[@]}"; do
     USER_DOWNLOAD["$user"]=$(( ${USER_DOWNLOAD["$user"]:-0} + download ))
 done
 
-# Сохраняем новое состояние
+# Сохраняем новое состояние для общей статистики
 > "$STATE_FILE"
 for user in "${!USER_UPLOAD[@]}"; do
     echo "$user:${USER_UPLOAD[$user]}:${USER_DOWNLOAD[$user]}" >> "$STATE_FILE"
 done
 
+# === ВЫВОД JSON С ПРАВИЛЬНЫМИ ДНЕВНЫМИ ЗНАЧЕНИЯМИ ===
 echo "["
 first=true
 for user in $(printf "%s\n" "${!USER_UPLOAD[@]}" | sort); do
     total_up=${USER_UPLOAD[$user]}
     total_down=${USER_DOWNLOAD[$user]}
 
-    prev_up=${PREV_UPLOAD[$user]:-0}
-    prev_down=${PREV_DOWNLOAD[$user]:-0}
+    day_base_up=${DAY_UPLOAD[$user]:-0}
+    day_base_down=${DAY_DOWNLOAD[$user]:-0}
 
-    day_up=$(( total_up - prev_up ))
-    day_down=$(( total_down - prev_down ))
+    day_up=$(( total_up - day_base_up ))
+    day_down=$(( total_down - day_base_down ))
 
     (( day_up < 0 )) && day_up=0
     (( day_down < 0 )) && day_down=0
@@ -164,5 +177,12 @@ done
 echo
 echo "]"
 
-rm -f "$TEMP_FILE" "$TEMP_FILE.sorted"
+# === СОХРАНЯЕМ НОВУЮ ДНЕВНУЮ СТАТИСТИКУ (опционально, если нужно обновлять) ===
+# Если вы хотите обновлять дневную статистику после каждого запуска, раскомментируйте:
 
+ > "$DAY_STATE_FILE"
+ for user in "${!USER_UPLOAD[@]}"; do
+     echo "$user:${USER_UPLOAD[$user]}:${USER_DOWNLOAD[$user]}" >> "$DAY_STATE_FILE"
+ done
+
+rm -f "$TEMP_FILE" "$TEMP_FILE.sorted"
