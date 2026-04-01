@@ -3,6 +3,7 @@ export PATH=$PATH:/usr/sbin:/usr/local/sbin
 
 MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
 TEMP_FILE="/tmp/ip_user_freq.txt"
+STATE_FILE="/opt/singbox-stats/user_traffic_state.txt"
 
 # Собираем логи
 mapfile -t LOGS < <(docker logs sing-box --tail 5000 2>&1)
@@ -19,7 +20,7 @@ for line in "${LOGS[@]}"; do
     fi
 done
 
-# Собираем ID -> пользователь (исключая outbound)
+# Собираем ID -> USER
 declare -A ID_TO_USER
 for line in "${LOGS[@]}"; do
     [[ "$line" =~ outbound ]] && continue
@@ -32,30 +33,24 @@ for line in "${LOGS[@]}"; do
     fi
 done
 
-# Связываем
+# Связываем IP:USER
 > "$TEMP_FILE"
 for id in "${!ID_TO_IP[@]}"; do
     ip="${ID_TO_IP[$id]}"
     user="${ID_TO_USER[$id]}"
-    if [[ -n "$ip" && -n "$user" ]]; then
-        echo "$ip:$user" >> "$TEMP_FILE"
-    fi
+    [[ -n "$ip" && -n "$user" ]] && echo "$ip:$user" >> "$TEMP_FILE"
 done
 
-# Добавляем старый маппинг
 [[ -f "$MAP_FILE" ]] && cat "$MAP_FILE" >> "$TEMP_FILE"
 
-# Выбираем для каждого IP пользователя с максимальной частотой (используем временные файлы вместо ассоциативных массивов с точками)
-> "$TEMP_FILE.sorted"
+# Выбор наиболее частого USER для IP
 sort "$TEMP_FILE" | uniq -c | sort -rn > "$TEMP_FILE.sorted"
 
 declare -A IP_TO_USER
 while read -r count pair; do
     ip="${pair%:*}"
     user="${pair#*:}"
-    if [[ -z "${IP_TO_USER[$ip]}" ]]; then
-        IP_TO_USER["$ip"]="$user"
-    fi
+    [[ -z "${IP_TO_USER[$ip]}" ]] && IP_TO_USER["$ip"]="$user"
 done < "$TEMP_FILE.sorted"
 
 # Сохраняем маппинг
@@ -64,42 +59,110 @@ for ip in "${!IP_TO_USER[@]}"; do
     echo "$ip:${IP_TO_USER[$ip]}" >> "$MAP_FILE"
 done
 
-# Создаем таблицу nft
+# nft таблица
 nft add table inet traffic 2>/dev/null
 
-# Очищаем старые цепочки
-for chain in $(nft -a list chains inet traffic 2>/dev/null | grep -oP 'chain \K[^ ]+' | head -100); do
-    nft delete chain inet traffic "$chain" 2>/dev/null
-done
+# Получаем существующие chain
+mapfile -t EXISTING_CHAINS < <(nft list chains inet traffic 2>/dev/null | grep -oP 'chain \K[^ ]+')
 
-# Собираем статистику
-echo "["
-first=true
+# Нужные chain
+declare -A NEEDED_CHAINS
 for ip in "${!IP_TO_USER[@]}"; do
     user="${IP_TO_USER[$ip]}"
     chain_in="traffic_in_${user}_${ip//./_}"
     chain_out="traffic_out_${user}_${ip//./_}"
-    
-    if ! nft list chain inet traffic "$chain_in" 2>/dev/null | grep -q "Chain"; then
-        nft add chain inet traffic "$chain_in" { type filter hook input priority 0\; }
+    NEEDED_CHAINS["$chain_in"]=1
+    NEEDED_CHAINS["$chain_out"]=1
+done
+
+# Удаляем лишние
+for chain in "${EXISTING_CHAINS[@]}"; do
+    [[ -z "${NEEDED_CHAINS[$chain]}" ]] && nft delete chain inet traffic "$chain" 2>/dev/null
+done
+
+# Загружаем прошлое состояние
+declare -A PREV_UPLOAD
+declare -A PREV_DOWNLOAD
+
+if [[ -f "$STATE_FILE" ]]; then
+    while IFS=":" read -r user up down; do
+        PREV_UPLOAD["$user"]="$up"
+        PREV_DOWNLOAD["$user"]="$down"
+    done < "$STATE_FILE"
+fi
+
+# Текущая статистика
+declare -A USER_UPLOAD
+declare -A USER_DOWNLOAD
+
+for ip in "${!IP_TO_USER[@]}"; do
+    user="${IP_TO_USER[$ip]}"
+    chain_in="traffic_in_${user}_${ip//./_}"
+    chain_out="traffic_out_${user}_${ip//./_}"
+
+    # chain + rule IN
+    if ! nft list chain inet traffic "$chain_in" >/dev/null 2>&1; then
+        nft add chain inet traffic "$chain_in" { type filter hook input priority 0\; policy accept\; }
+    fi
+    if ! nft list chain inet traffic "$chain_in" | grep -q "ip saddr $ip"; then
         nft add rule inet traffic "$chain_in" ip saddr "$ip" counter
     fi
-    
-    if ! nft list chain inet traffic "$chain_out" 2>/dev/null | grep -q "Chain"; then
-        nft add chain inet traffic "$chain_out" { type filter hook output priority 0\; }
+
+    # chain + rule OUT
+    if ! nft list chain inet traffic "$chain_out" >/dev/null 2>&1; then
+        nft add chain inet traffic "$chain_out" { type filter hook output priority 0\; policy accept\; }
+    fi
+    if ! nft list chain inet traffic "$chain_out" | grep -q "ip daddr $ip"; then
         nft add rule inet traffic "$chain_out" ip daddr "$ip" counter
     fi
-    
+
+    # читаем
     upload=$(nft list chain inet traffic "$chain_in" | grep "ip saddr $ip" | grep -oP 'bytes \K[0-9]+' | head -1)
     download=$(nft list chain inet traffic "$chain_out" | grep "ip daddr $ip" | grep -oP 'bytes \K[0-9]+' | head -1)
-    
+
+    upload=${upload:-0}
+    download=${download:-0}
+
+    USER_UPLOAD["$user"]=$(( ${USER_UPLOAD["$user"]:-0} + upload ))
+    USER_DOWNLOAD["$user"]=$(( ${USER_DOWNLOAD["$user"]:-0} + download ))
+done
+
+# Сохраняем новое состояние
+> "$STATE_FILE"
+for user in "${!USER_UPLOAD[@]}"; do
+    echo "$user:${USER_UPLOAD[$user]}:${USER_DOWNLOAD[$user]}" >> "$STATE_FILE"
+done
+
+echo "["
+first=true
+for user in $(printf "%s\n" "${!USER_UPLOAD[@]}" | sort); do
+    total_up=${USER_UPLOAD[$user]}
+    total_down=${USER_DOWNLOAD[$user]}
+
+    prev_up=${PREV_UPLOAD[$user]:-0}
+    prev_down=${PREV_DOWNLOAD[$user]:-0}
+
+    day_up=$(( total_up - prev_up ))
+    day_down=$(( total_down - prev_down ))
+
+    (( day_up < 0 )) && day_up=0
+    (( day_down < 0 )) && day_down=0
+
     if [ "$first" = true ]; then
         first=false
     else
         echo ","
     fi
-    echo "{\"user\":\"$user\",\"ip\":\"$ip\",\"upload\":${upload:-0},\"download\":${download:-0}}"
+
+    printf '{"user":"%s","total_upload":%s,"total_download":%s,"day_upload":%s,"day_download":%s}' \
+        "$user" \
+        "$total_up" \
+        "$total_down" \
+        "$day_up" \
+        "$day_down"
 done
+echo
 echo "]"
 
 rm -f "$TEMP_FILE" "$TEMP_FILE.sorted"
+
