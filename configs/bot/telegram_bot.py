@@ -633,21 +633,17 @@ async def show_help(update):
         await update.message.reply_text(help_text, parse_mode='HTML')
 
 
-async def show_traffic(update, context):
-    if isinstance(update, CallbackQuery):
-        query = update
-        user_id = query.from_user.id
-        send_func = query.message.edit_text
-        await query.answer()
-    else:
-        user_id = update.effective_user.id
-        send_func = update.message.reply_text
+async def show_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает трафик пользователя"""
+    user_id = query.from_user.id
+    send_func = query.message.edit_text
+    await query.answer()
     
     is_admin = user_id in Config.ADMIN_IDS
     username = get_user_by_telegram_id(user_id)
     stats = get_traffic_stats()
     
-    show_admin = hasattr(update, 'callback_query') and update.callback_query and update.callback_query.data == "admin_traffic"
+    show_admin = query.data == "admin_traffic"
     
     if is_admin and show_admin:
         if not stats:
