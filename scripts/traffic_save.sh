@@ -1,5 +1,7 @@
 #!/bin/bash
 
+export PATH=$PATH:/usr/sbin:/usr/local/sbin
+
 STATS_FILE="/opt/singbox-stats/traffic.json"
 mkdir -p "$(dirname "$STATS_FILE")"
 
