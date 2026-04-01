@@ -1,6 +1,8 @@
-
 #!/bin/bash
 export PATH=$PATH:/usr/sbin:/usr/local/sbin
+
+MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
+TEMP_FILE="/tmp/ip_user_freq.txt"
 
 # Собираем логи
 mapfile -t LOGS < <(docker logs sing-box --tail 5000 2>&1)
@@ -17,35 +19,50 @@ for line in "${LOGS[@]}"; do
     fi
 done
 
-# Собираем ID -> пользователь (только строки с inbound/vless[REALITY]: [имя])
+# Собираем ID -> пользователь (исключая outbound)
 declare -A ID_TO_USER
 for line in "${LOGS[@]}"; do
-    if [[ "$line" =~ inbound/vless\[REALITY\]:\ \[([A-Za-z0-9_]+)\] ]]; then
-        user="${BASH_REMATCH[1]}"
-        if [[ "$user" != "REALITY" ]]; then
-            if [[ "$line" =~ \[([0-9]+) ]]; then
-                id="${BASH_REMATCH[1]}"
-                ID_TO_USER["$id"]="$user"
-            fi
+    [[ "$line" =~ outbound ]] && continue
+    if [[ "$line" =~ \[([0-9]+).*\[([A-Za-z0-9_]+)\] ]]; then
+        id="${BASH_REMATCH[1]}"
+        user="${BASH_REMATCH[2]}"
+        if [[ -n "$id" && -n "$user" && "$user" != "REALITY" ]]; then
+            ID_TO_USER["$id"]="$user"
         fi
     fi
 done
 
-# Связываем IP и пользователя через ID
-> /tmp/ip_user_map.txt
+# Связываем
+> "$TEMP_FILE"
 for id in "${!ID_TO_IP[@]}"; do
     ip="${ID_TO_IP[$id]}"
     user="${ID_TO_USER[$id]}"
     if [[ -n "$ip" && -n "$user" ]]; then
-        echo "$ip:$user" >> /tmp/ip_user_map.txt
+        echo "$ip:$user" >> "$TEMP_FILE"
     fi
 done
 
-# Уникальные маппинги (последнее вхождение)
+# Добавляем старый маппинг
+[[ -f "$MAP_FILE" ]] && cat "$MAP_FILE" >> "$TEMP_FILE"
+
+# Выбираем для каждого IP пользователя с максимальной частотой (используем временные файлы вместо ассоциативных массивов с точками)
+> "$TEMP_FILE.sorted"
+sort "$TEMP_FILE" | uniq -c | sort -rn > "$TEMP_FILE.sorted"
+
 declare -A IP_TO_USER
-while IFS=: read -r ip user; do
-    IP_TO_USER["$ip"]="$user"
-done < <(tac /tmp/ip_user_map.txt | sort -u -t: -k1,1)
+while read -r count pair; do
+    ip="${pair%:*}"
+    user="${pair#*:}"
+    if [[ -z "${IP_TO_USER[$ip]}" ]]; then
+        IP_TO_USER["$ip"]="$user"
+    fi
+done < "$TEMP_FILE.sorted"
+
+# Сохраняем маппинг
+> "$MAP_FILE"
+for ip in "${!IP_TO_USER[@]}"; do
+    echo "$ip:${IP_TO_USER[$ip]}" >> "$MAP_FILE"
+done
 
 # Создаем таблицу nft
 nft add table inet traffic 2>/dev/null
@@ -85,4 +102,4 @@ for ip in "${!IP_TO_USER[@]}"; do
 done
 echo "]"
 
-rm -f /tmp/ip_user_map.txt
+rm -f "$TEMP_FILE" "$TEMP_FILE.sorted"
