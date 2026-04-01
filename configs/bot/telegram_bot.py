@@ -251,9 +251,7 @@ def generate_client_config(username: str, user_uuid: str, password: str, platfor
             "address": "172.19.0.1/30",
             "auto_route": True,
             "strict_route": True,
-            "stack": "system",
-            "sniff": True,
-            "sniff_override_destination": True
+            "stack": "system"
         }],
         "outbounds": [
             {"type": "direct", "tag": "direct"},
