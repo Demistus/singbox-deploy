@@ -100,26 +100,10 @@ table ip filter {
     chain forward {
         type filter hook forward priority filter; policy drop;
         ct state established,related accept
-        iifname "docker0" oifname "eth0" accept
-        iifname "br-*" oifname "eth0" accept
-        iifname "eth0" oifname "docker0" ct state established,related accept
-        iifname "eth0" oifname "br-*" ct state established,related accept
     }
     
     chain output {
         type filter hook output priority filter; policy accept;
-    }
-}
-
-table ip nat {
-    chain prerouting {
-        type nat hook prerouting priority dstnat; policy accept;
-    }
-    
-    chain postrouting {
-        type nat hook postrouting priority srcnat; policy accept;
-        oifname "eth0" ip saddr 172.17.0.0/16 masquerade
-        oifname "eth0" ip saddr 172.18.0.0/16 masquerade
     }
 }
 NFT_EOF
