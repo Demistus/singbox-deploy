@@ -64,31 +64,23 @@ SING_EOF
 fi
 
 # 9. Копирование скриптов трафика
-cp scripts/traffic_nft.sh /usr/local/bin/traffic_nft.sh
-cp scripts/traffic_save.sh /usr/local/bin/traffic_save.sh
-chmod +x /usr/local/bin/traffic_nft.sh
-chmod +x /usr/local/bin/traffic_save.sh
+cp scripts/traffic_nft.sh /opt/singbox-stats/traffic_nft.sh
+chmod +x /opt/singbox-stats/traffic_nft.sh
 
 # 10. Настройка cron
-cat > /etc/cron.d/traffic-stats << 'CRON_EOF'
-*/5 * * * * root /usr/local/bin/traffic_save.sh >> /var/log/traffic-stats.log 2>&1
-CRON_EOF
-chmod 644 /etc/cron.d/traffic-stats
-systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || service cron restart
+
 
 # 11. Создание скрипта удаления
-cat > /usr/local/bin/uninstall-singbox.sh << 'UNINSTALL'
+cat > /opt/singbox-deploy/scripts/uninstall-singbox.sh << 'UNINSTALL'
 #!/bin/bash
 echo "=== Удаление sing-box + Telegram Bot ==="
 cd /opt/singbox-deploy 2>/dev/null && docker-compose down 2>/dev/null
 docker rmi singbox-deploy_sing-box singbox-deploy_bot 2>/dev/null
 rm -rf /opt/singbox-deploy /etc/sing-box /var/lib/sing-box /var/log/sing-box /opt/singbox-stats
-rm -f /usr/local/bin/traffic_nft.sh /usr/local/bin/traffic_save.sh
-rm -f /etc/cron.d/traffic-stats
 nft delete table inet traffic 2>/dev/null
 echo "✅ Удаление завершено"
 UNINSTALL
-chmod +x /usr/local/bin/uninstall-singbox.sh
+chmod +x /opt/singbox-deploy/scripts/uninstall-singbox.sh
 
 # 12. Запуск контейнеров
 echo "[6/6] Запуск контейнеров (сборка может занять минут 10)..."
@@ -99,12 +91,11 @@ echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║                 ✅ УСТАНОВКА ЗАВЕРШЕНА                       ║"
 echo "╠══════════════════════════════════════════════════════════════╣"
-echo "║  📁 Конфиги:        /etc/sing-box                           ║"
-echo "║  📊 Статистика:     /opt/singbox-stats/traffic.json         ║"
-echo "║  📜 Скрипты:        /usr/local/bin/traffic_*.sh             ║"
-echo "║  🤖 Бот:            docker logs telegram-bot                ║"
-echo "║  ✅ Статистика трафика обновляется каждые 5 минут           ║"
-echo "║  🧹 Удаление:       uninstall-singbox.sh                    ║"
-echo "║  📱 Бот доступен в Telegram: @f_off_rkn                     ║"
+echo "║  📁 Конфиги:        /etc/sing-box                            ║"
+echo "║  📊 Статистика:     /opt/singbox-stats/traffic.json          ║"             ║"
+echo "║  🤖 Бот:            docker logs telegram-bot                 ║"
+echo "║  ✅ Статистика трафика обновляется каждые 5 минут            ║"
+echo "║  🧹 Удаление:/opt/singbox-deploy/scripts/uninstall-singbox.sh║"
+echo "║  📱 Бот доступен в Telegram: @f_off_rkn                      ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 
