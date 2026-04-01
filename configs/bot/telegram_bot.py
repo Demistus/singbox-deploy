@@ -215,7 +215,6 @@ def get_server_params() -> Dict[str, str]:
                 if inbound.get('type') == 'vless':
                     tls = inbound.get('tls', {})
                     reality = tls.get('reality', {})
-                    params['public_key'] = reality.get('public_key', '')
                     params['short_id'] = reality.get('short_id', '')
                     params['vless_sni'] = tls.get('server_name', params['vless_sni'])
                     break
