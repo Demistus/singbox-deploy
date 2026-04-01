@@ -3,7 +3,7 @@
 export PATH=$PATH:/usr/sbin:/usr/local/sbin
 
 # Собираем логи
-mapfile -t LOGS < <(docker logs sing-box --tail 1500 2>&1)
+mapfile -t LOGS < <(docker logs sing-box --tail 5000 2>&1)
 
 # Собираем ID -> IP
 declare -A ID_TO_IP
