@@ -1,5 +1,4 @@
 #!/bin/bash
-export PATH=$PATH:/usr/sbin:/usr/local/sbin
 
 MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
 TEMP_FILE="/tmp/ip_user_freq.txt"
