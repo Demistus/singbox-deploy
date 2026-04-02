@@ -4,21 +4,9 @@ export PATH=$PATH:/usr/sbin:/usr/local/sbin
 MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
 TEMP_FILE="/tmp/ip_user_freq.txt"
 STATE_FILE="/opt/singbox-stats/user_traffic_state.txt"
-DAY_STATE_FILE="/opt/singbox-stats/user_traffic_day.txt"
 
 # Собираем логи
 mapfile -t LOGS < <(docker logs sing-box --tail 5000 2>&1)
-
-declare -A DAY_UPLOAD
-declare -A DAY_DOWNLOAD
-
-# === ЗАГРУЖАЕМ ДНЕВНУЮ СТАТИСТИКУ ДО ВСЕХ ВЫЧИСЛЕНИЙ ===
-if [[ -f "$DAY_STATE_FILE" ]]; then
-    while IFS=":" read -r user up down; do
-        DAY_UPLOAD["$user"]="$up"
-        DAY_DOWNLOAD["$user"]="$down"
-    done < "$DAY_STATE_FILE"
-fi
 
 # Собираем ID -> IP
 declare -A ID_TO_IP
@@ -92,7 +80,7 @@ for chain in "${EXISTING_CHAINS[@]}"; do
     [[ -z "${NEEDED_CHAINS[$chain]}" ]] && /usr/sbin/nft delete chain inet traffic "$chain" 2>/dev/null
 done
 
-# Загружаем прошлое состояние для общей статистики
+# Загружаем прошлое состояние
 declare -A PREV_UPLOAD
 declare -A PREV_DOWNLOAD
 
@@ -112,7 +100,6 @@ for ip in "${!IP_TO_USER[@]}"; do
     chain_in="traffic_in_${user}_${ip//./_}"
     chain_out="traffic_out_${user}_${ip//./_}"
 
-    # chain + rule IN
     if ! /usr/sbin/nft list chain inet traffic "$chain_in" >/dev/null 2>&1; then
         /usr/sbin/nft add chain inet traffic "$chain_in" '{ type filter hook input priority 0; policy accept; }'
     fi
@@ -120,7 +107,6 @@ for ip in "${!IP_TO_USER[@]}"; do
         /usr/sbin/nft add rule inet traffic "$chain_in" ip saddr "$ip" counter
     fi
 
-    # chain + rule OUT
     if ! /usr/sbin/nft list chain inet traffic "$chain_out" >/dev/null 2>&1; then
         /usr/sbin/nft add chain inet traffic "$chain_out" '{ type filter hook output priority 0; policy accept; }'
     fi
@@ -128,7 +114,6 @@ for ip in "${!IP_TO_USER[@]}"; do
         /usr/sbin/nft add rule inet traffic "$chain_out" ip daddr "$ip" counter
     fi
 
-    # читаем
     upload=$(/usr/sbin/nft list chain inet traffic "$chain_in" | grep "ip saddr $ip" | grep -oP 'bytes \K[0-9]+' | head -1)
     download=$(/usr/sbin/nft list chain inet traffic "$chain_out" | grep "ip daddr $ip" | grep -oP 'bytes \K[0-9]+' | head -1)
 
@@ -139,27 +124,18 @@ for ip in "${!IP_TO_USER[@]}"; do
     USER_DOWNLOAD["$user"]=$(( ${USER_DOWNLOAD["$user"]:-0} + download ))
 done
 
-# Сохраняем новое состояние для общей статистики
+# Сохраняем состояние
 > "$STATE_FILE"
 for user in "${!USER_UPLOAD[@]}"; do
     echo "$user:${USER_UPLOAD[$user]}:${USER_DOWNLOAD[$user]}" >> "$STATE_FILE"
 done
 
-# === ВЫВОД JSON С ПРАВИЛЬНЫМИ ДНЕВНЫМИ ЗНАЧЕНИЯМИ ===
+# Вывод JSON
 echo "["
 first=true
 for user in $(printf "%s\n" "${!USER_UPLOAD[@]}" | sort); do
     total_up=${USER_UPLOAD[$user]}
     total_down=${USER_DOWNLOAD[$user]}
-
-    day_base_up=${DAY_UPLOAD[$user]:-0}
-    day_base_down=${DAY_DOWNLOAD[$user]:-0}
-
-    day_up=$(( total_up - day_base_up ))
-    day_down=$(( total_down - day_base_down ))
-
-    (( day_up < 0 )) && day_up=0
-    (( day_down < 0 )) && day_down=0
 
     if [ "$first" = true ]; then
         first=false
@@ -167,20 +143,13 @@ for user in $(printf "%s\n" "${!USER_UPLOAD[@]}" | sort); do
         echo ","
     fi
 
-    printf '{"user":"%s","total_upload":%s,"total_download":%s,"day_upload":%s,"day_download":%s}' \
+    printf '{"user":"%s","upload":%s,"download":%s,"total":%s}' \
         "$user" \
         "$total_up" \
         "$total_down" \
-        "$day_up" \
-        "$day_down"
+        "$((total_up + total_down))"
 done
 echo
 echo "]"
-
-# === СОХРАНЯЕМ НОВУЮ ДНЕВНУЮ СТАТИСТИКУ ===
-> "$DAY_STATE_FILE"
-for user in "${!USER_UPLOAD[@]}"; do
-    echo "$user:${USER_UPLOAD[$user]}:${USER_DOWNLOAD[$user]}" >> "$DAY_STATE_FILE"
-done
 
 rm -f "$TEMP_FILE" "$TEMP_FILE.sorted"
