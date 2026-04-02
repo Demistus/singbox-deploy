@@ -41,16 +41,25 @@ for id in "${!ID_TO_IP[@]}"; do
     [[ -n "$ip" && -n "$user" ]] && echo "$ip:$user" >> "$TEMP_FILE"
 done
 
+# Добавляем старый маппинг
 [[ -f "$MAP_FILE" ]] && cat "$MAP_FILE" >> "$TEMP_FILE"
 
 # Выбор наиболее частого USER для IP
 sort "$TEMP_FILE" | uniq -c | sort -rn > "$TEMP_FILE.sorted"
 
+# Загружаем старый маппинг как основу
 declare -A IP_TO_USER
+if [[ -f "$MAP_FILE" ]]; then
+    while IFS=: read -r ip user; do
+        IP_TO_USER["$ip"]="$user"
+    done < "$MAP_FILE"
+fi
+
+# Обновляем активными IP из логов (перезаписываем)
 while read -r count pair; do
     ip="${pair%:*}"
     user="${pair#*:}"
-    [[ -z "${IP_TO_USER[$ip]}" ]] && IP_TO_USER["$ip"]="$user"
+    IP_TO_USER["$ip"]="$user"
 done < "$TEMP_FILE.sorted"
 
 # Сохраняем маппинг
