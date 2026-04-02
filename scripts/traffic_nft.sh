@@ -1,6 +1,11 @@
 #!/bin/bash
 export PATH=$PATH:/usr/sbin:/usr/local/sbin
 
+# Блокировка от одновременного запуска
+LOCK_FILE="/tmp/traffic_nft.lock"
+exec 200>"$LOCK_FILE"
+flock -n 200 || exit 1
+
 MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
 TEMP_FILE="/tmp/ip_user_freq.txt"
 STATE_FILE="/opt/singbox-stats/user_traffic_state.txt"
@@ -8,11 +13,10 @@ STATE_FILE="/opt/singbox-stats/user_traffic_state.txt"
 # Собираем логи
 mapfile -t LOGS < <(docker logs sing-box --tail 5000 2>&1)
 
-# Собираем ID -> IP (только из успешных подключений, без ERROR)
+# Собираем ID -> IP (игнорируем ошибки валидации REALITY)
 declare -A ID_TO_IP
 for line in "${LOGS[@]}"; do
-    # Пропускаем строки с ошибками
-    [[ "$line" =~ ERROR ]] && continue
+    [[ "$line" =~ "TLS handshake: REALITY: processed invalid connection" ]] && continue
     if [[ "$line" =~ inbound\ connection\ from\ ([0-9.]+) ]]; then
         ip="${BASH_REMATCH[1]}"
         if [[ "$line" =~ \[([0-9]+) ]]; then
@@ -22,11 +26,11 @@ for line in "${LOGS[@]}"; do
     fi
 done
 
-# Собираем ID -> USER (только из успешных подключений)
+# Собираем ID -> USER (игнорируем ошибки валидации REALITY)
 declare -A ID_TO_USER
 for line in "${LOGS[@]}"; do
+    [[ "$line" =~ "TLS handshake: REALITY: processed invalid connection" ]] && continue
     [[ "$line" =~ outbound ]] && continue
-    [[ "$line" =~ ERROR ]] && continue
     if [[ "$line" =~ \[([0-9]+).*\[([A-Za-z0-9_]+)\] ]]; then
         id="${BASH_REMATCH[1]}"
         user="${BASH_REMATCH[2]}"
@@ -58,7 +62,7 @@ if [[ -f "$MAP_FILE" ]]; then
     done < "$MAP_FILE"
 fi
 
-# Обновляем активными IP из логов (только успешные)
+# Обновляем активными IP из логов
 while read -r count pair; do
     ip="${pair%:*}"
     user="${pair#*:}"
@@ -128,7 +132,6 @@ done
 # Загружаем прошлое состояние
 declare -A PREV_UPLOAD
 declare -A PREV_DOWNLOAD
-
 if [[ -f "$STATE_FILE" ]]; then
     while IFS=":" read -r user up down; do
         PREV_UPLOAD["$user"]="$up"
@@ -136,7 +139,7 @@ if [[ -f "$STATE_FILE" ]]; then
     done < "$STATE_FILE"
 fi
 
-# Текущая статистика
+# Текущая статистика из nft
 declare -A USER_UPLOAD
 declare -A USER_DOWNLOAD
 
@@ -156,6 +159,12 @@ for user in "${!USER_IPS[@]}"; do
     
     USER_UPLOAD["$user"]=$upload
     USER_DOWNLOAD["$user"]=$download
+done
+
+# Суммируем с предыдущим состоянием
+for user in "${!USER_UPLOAD[@]}"; do
+    USER_UPLOAD["$user"]=$(( ${USER_UPLOAD["$user"]} + ${PREV_UPLOAD["$user"]:-0} ))
+    USER_DOWNLOAD["$user"]=$(( ${USER_DOWNLOAD["$user"]} + ${PREV_DOWNLOAD["$user"]:-0} ))
 done
 
 # Сохраняем состояние
@@ -187,3 +196,5 @@ echo
 echo "]"
 
 rm -f "$TEMP_FILE" "$TEMP_FILE.sorted"
+flock -u 200
+rm -f "$LOCK_FILE"
