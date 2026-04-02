@@ -49,28 +49,7 @@
 			"listen_port": 443,
 			"tcp_multi_path": true,
 			"tcp_fast_open": true,
-			"users": [
-				{
-					"name": "openwrt",
-					"uuid": "0055d86b-72df-42b4-add9-b0d88404bc5e",
-					"flow": "xtls-rprx-vision"
-				},
-				{
-					"name": "NaHayah",
-					"uuid": "a14219b3-b167-4da3-93b9-6d94dfe80153",
-					"flow": "xtls-rprx-vision"
-				},
-				{
-					"name": "user_1327266237",
-					"uuid": "7019b90e-3620-4ee5-aa39-5c15e9400ed8",
-					"flow": "xtls-rprx-vision"
-				},
-				{
-					"name": "Ronego",
-					"uuid": "7d9b8b80-6a50-479a-a4b0-2c0fd9e0f2fd",
-					"flow": "xtls-rprx-vision"
-				}
-			],
+			"users": [],
 			"tls": {
 				"enabled": true,
 				"server_name": "www.microsoft.com",
