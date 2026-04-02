@@ -172,7 +172,6 @@ def save_users_to_config(users: List[Dict[str, Any]]) -> bool:
 def load_users() -> list:
     return load_users_from_config()
 
-
 def get_traffic_stats() -> List[Dict[str, Any]]:
     """Читает статистику из файла traffic.json"""
     stats_file = Path("/opt/singbox-stats/traffic.json")
@@ -449,7 +448,7 @@ async def send_existing_config(query, context, username):
 async def show_menu(bot, chat_id: int, user_id: int):
     keyboard = [
         [InlineKeyboardButton("📱 Мои конфиги", callback_data="my_configs")],
-        [InlineKeyboardButton("📊 Мой трафик", callback_data="show_my_traffic")],  # Изменено
+        [InlineKeyboardButton("📊 Мой трафик", callback_data="show_my_traffic")],
         [InlineKeyboardButton("🔑 Создать мой конфиг", callback_data="create_my_config")],
         [InlineKeyboardButton("ℹ️ Информация о сервере", callback_data="server_info")],
         [InlineKeyboardButton("❓ Помощь", callback_data="help")]
@@ -459,7 +458,7 @@ async def show_menu(bot, chat_id: int, user_id: int):
             InlineKeyboardButton("➕ Добавить пользователя", callback_data="add_user"),
             InlineKeyboardButton("🗑️ Удалить пользователя", callback_data="delete_user")
         ])
-        keyboard.append([InlineKeyboardButton("📊 Статистика всех пользователей", callback_data="show_total_traffic")])  # Изменено
+        keyboard.append([InlineKeyboardButton("📊 Статистика всех пользователей", callback_data="show_total_traffic")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = "📱 <b>Главное меню</b>\n\nВыберите действие:"
@@ -631,95 +630,54 @@ async def show_help(update):
 
 
 async def show_my_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает трафик текущего пользователя"""
     user_id = query.from_user.id
     await query.answer()
 
     username = get_user_by_telegram_id(user_id)
     if not username:
-        await query.message.edit_text(
-            "❌ У вас нет активного конфига.\nСоздайте его через 'Создать мой конфиг'",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔑 Создать конфиг", callback_data="create_my_config")]])
-        )
+        await query.message.edit_text("❌ Нет активного конфига", parse_mode='HTML')
         return
 
     stats = get_traffic_stats()
-
-    # Ищем статистику для пользователя
     user_stats = next((s for s in stats if s.get('user') == username), None)
 
     if user_stats:
-        total_up = user_stats.get('total_upload', 0)
-        total_down = user_stats.get('total_download', 0)
-        day_up = user_stats.get('day_upload', 0)
-        day_down = user_stats.get('day_download', 0)
+        upload = user_stats.get('upload', 0)
+        download = user_stats.get('download', 0)
+        total = user_stats.get('total', 0)
 
         text = f"📊 <b>Ваш трафик</b>\n\n"
         text += f"👤 <b>{username}</b>\n"
-        text += f"📤 <b>За день:</b> {format_bytes(day_up)}\n"
-        text += f"📥 <b>За день:</b> {format_bytes(day_down)}\n"
-        text += f"📈 <b>Всего отправлено:</b> {format_bytes(total_up)}\n"
-        text += f"📉 <b>Всего получено:</b> {format_bytes(total_down)}\n"
-        text += f"📊 <b>Общий трафик:</b> {format_bytes(total_up + total_down)}"
+        text += f"📥 <b>Получено:</b> {format_bytes(download)}\n"
+        text += f"📤 <b>Отправлено:</b> {format_bytes(upload)}\n"
+        text += f"📊 <b>Всего:</b> {format_bytes(total)}"
     else:
-        text = f"📊 <b>Ваш трафик</b>\n\n👤 {username}\n📊 Нет данных о трафике"
+        text = f"📊 <b>Ваш трафик</b>\n\n👤 {username}\nНет данных"
 
-    await query.message.edit_text(
-        text,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
-    )
-
+    await query.message.edit_text(text, parse_mode='HTML')
 
 async def show_total_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику всех пользователей (только для админов)"""
     user_id = query.from_user.id
     await query.answer()
 
-    # Проверка прав администратора
     if user_id not in Config.ADMIN_IDS:
-        await query.message.edit_text(
-            "❌ Доступ запрещен. Только для администраторов.",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
-        )
+        await query.message.edit_text("❌ Доступ запрещен", parse_mode='HTML')
         return
 
     stats = get_traffic_stats()
-
     if not stats:
-        await query.message.edit_text(
-            "📊 <b>Статистика трафика</b>\n\nНет данных о трафике",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
-        )
+        await query.message.edit_text("📊 Нет данных", parse_mode='HTML')
         return
 
-    text = "📊 <b>Статистика трафика всех пользователей</b>\n\n"
+    text = "📊 <b>Статистика всех пользователей</b>\n\n"
+    for s in sorted(stats, key=lambda x: x.get('total', 0), reverse=True):
+        text += f"👤 <b>{s['user']}</b>\n"
+        text += f"  📥 Получено: {format_bytes(s.get('download', 0))}\n"
+        text += f"  📤 Отправлено: {format_bytes(s.get('upload', 0))}\n"
+        text += f"  📊 Всего: {format_bytes(s.get('total', 0))}\n\n"
 
-    # Сортируем по общему трафику (upload + download)
-    sorted_stats = sorted(stats, key=lambda x: x.get('total_upload', 0) + x.get('total_download', 0), reverse=True)
-
-    for user_data in sorted_stats:
-        username = user_data.get('user', 'Unknown')
-        total_up = user_data.get('total_upload', 0)
-        total_down = user_data.get('total_download', 0)
-        day_up = user_data.get('day_upload', 0)
-        day_down = user_data.get('day_download', 0)
-
-        text += f"👤 <b>{username}</b>\n"
-        text += f"  📤 За день: {format_bytes(day_up)}\n"
-        text += f"  📥 За день: {format_bytes(day_down)}\n"
-        text += f"  📈 Всего: {format_bytes(total_up + total_down)}\n"
-        text += "─" * 25 + "\n"
-
-    await query.message.edit_text(
-        text,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
-    )
-
+    await query.message.edit_text(text, parse_mode='HTML')
 
 async def add_user_start(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
