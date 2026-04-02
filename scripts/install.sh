@@ -113,14 +113,35 @@ nft -f /etc/nftables.conf
 systemctl enable nftables
 systemctl restart nftables
 
-# 11. Настройка cron
-echo "[8/8] Настройка cron..."
-cat > /etc/cron.d/singbox-stats << 'CRON'
-# Обновление статистики каждые 5 минут
-*/5 * * * * root /opt/singbox-stats/traffic_nft.sh > /opt/singbox-stats/traffic.json 2>&1
-CRON
-chmod 644 /etc/cron.d/singbox-stats
-systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || service cron restart
+# 11. Настройка traffic-stats.service
+cat > /etc/systemd/system/traffic-stats.service << 'EOF'
+[Unit]
+Description=Update traffic stats
+
+[Service]
+Type=oneshot
+ExecStart=/opt/singbox-stats/traffic_nft.sh
+StandardOutput=file:/opt/singbox-stats/traffic.json
+StandardError=inherit
+User=root
+EOF
+
+# Таймер (каждые 5 минут)
+cat > /etc/systemd/system/traffic-stats.timer << 'EOF'
+[Unit]
+Description=Run traffic-stats every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable traffic-stats.timer
+systemctl start traffic-stats.timer
 
 # 12. Создание скрипта удаления
 cat > /opt/singbox-deploy/scripts/uninstall-singbox.sh << 'UNINSTALL'
