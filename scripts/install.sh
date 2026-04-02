@@ -118,8 +118,6 @@ echo "[8/8] Настройка cron..."
 cat > /etc/cron.d/singbox-stats << 'CRON'
 # Обновление статистики каждые 5 минут
 */5 * * * * root /opt/singbox-stats/traffic_nft.sh > /opt/singbox-stats/traffic.json 2>&1
-# Дневной снимок в полночь
-0 0 * * * root /opt/singbox-stats/snapshot_day.sh
 CRON
 chmod 644 /etc/cron.d/singbox-stats
 systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || service cron restart
