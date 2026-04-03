@@ -68,13 +68,6 @@ echo "[6/8] Установка скриптов..."
 cp scripts/traffic_nft.sh /opt/singbox-stats/traffic_nft.sh
 chmod +x /opt/singbox-stats/traffic_nft.sh
 
-# Создаем скрипт дневного снимка
-cat > /opt/singbox-stats/snapshot_day.sh << 'SNAPSHOT'
-#!/bin/bash
-cp /opt/singbox-stats/user_traffic_state.txt /opt/singbox-stats/user_traffic_day.txt 2>/dev/null || true
-SNAPSHOT
-chmod +x /opt/singbox-stats/snapshot_day.sh
-
 # 10. Настройка nftables
 echo "[7/8] Настройка nftables..."
 cat > /etc/nftables.conf << 'NFT_EOF'
@@ -121,8 +114,8 @@ Description=Update traffic stats
 [Service]
 Type=oneshot
 ExecStart=/opt/singbox-stats/traffic_nft.sh
-StandardOutput=file:/opt/singbox-stats/traffic.json
-StandardError=inherit
+StandardOutput=journal
+StandardError=journal
 User=root
 EOF
 
