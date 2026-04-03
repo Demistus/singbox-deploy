@@ -1,49 +1,49 @@
 #!/bin/bash
-
 export PATH=$PATH:/usr/sbin:/usr/local/sbin
 
-MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
-STATE_FILE="/opt/singbox-stats/user_traffic_state.txt"
+LOCK_FILE="/tmp/traffic_nft.lock"
+exec 200>"$LOCK_FILE"
+flock -n 200 || exit 1
 
-# Очистка ANSI-кодов обязательна для корректного парсинга
+MAP_FILE="/opt/singbox-stats/ip_user_map.txt"
+NFT_STATE_FILE="/opt/singbox-stats/user_nft_state.txt"
+TOTAL_STATE_FILE="/opt/singbox-stats/user_total_state.txt"
+
+# === 1. ПОЛУЧАЕМ ЛОГИ И ОЧИЩАЕМ ANSI ===
 LOGS=$(docker logs sing-box --tail 5000 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g')
 
-# === НОВАЯ ЛОГИКА МАППИНГА ПО ID ===
-declare -A IP_BY_ID
-declare -A USER_BY_ID
+# === 2. МАППИНГ IP -> USER ПО ID ===
+declare -A ID_TO_IP
+declare -A ID_TO_USER
 
-# Собираем IP по ID из строк inbound connection from
 while IFS= read -r line; do
     if [[ "$line" =~ \[([0-9]+)\ .*inbound\ connection\ from\ ([0-9.]+) ]]; then
         id="${BASH_REMATCH[1]}"
         ip="${BASH_REMATCH[2]}"
-        IP_BY_ID["$id"]="$ip"
+        ID_TO_IP["$id"]="$ip"
     fi
 done <<< "$LOGS"
 
-# Собираем имя по ID из строк inbound connection to
 while IFS= read -r line; do
     if [[ "$line" =~ \[([0-9]+)\ .*\[([A-Za-z0-9_]+)\].*inbound\ connection\ to ]]; then
         id="${BASH_REMATCH[1]}"
         user="${BASH_REMATCH[2]}"
         if [[ "$user" != "REALITY" && "$user" != "direct" ]]; then
-            USER_BY_ID["$id"]="$user"
+            ID_TO_USER["$id"]="$user"
         fi
     fi
 done <<< "$LOGS"
 
-# Связываем IP и имя через общий ID
 declare -A IP_TO_USER
-for id in "${!IP_BY_ID[@]}"; do
-    if [[ -n "${USER_BY_ID[$id]}" ]]; then
-        ip="${IP_BY_ID[$id]}"
-        user="${USER_BY_ID[$id]}"
-        # Если IP уже есть - не перезаписываем (оставляем первое попавшееся)
-        [[ -z "${IP_TO_USER[$ip]}" ]] && IP_TO_USER["$ip"]="$user"
+for id in "${!ID_TO_IP[@]}"; do
+    ip="${ID_TO_IP[$id]}"
+    user="${ID_TO_USER[$id]}"
+    if [[ -n "$ip" && -n "$user" ]]; then
+        IP_TO_USER["$ip"]="$user"
     fi
 done
 
-# Добавляем старый маппинг только для IP, которых ещё нет
+# Добавляем старый маппинг для IP, которых нет в свежих логах
 if [[ -f "$MAP_FILE" ]]; then
     while IFS=':' read -r ip user; do
         [[ -z "${IP_TO_USER[$ip]}" ]] && IP_TO_USER["$ip"]="$user"
@@ -56,135 +56,130 @@ for ip in "${!IP_TO_USER[@]}"; do
     echo "$ip:${IP_TO_USER[$ip]}" >> "$MAP_FILE"
 done
 
-# === nft таблица ===
+# === 3. NFT: СОЗДАЁМ ЦЕПОЧКИ (только новые) ===
 /usr/sbin/nft add table inet traffic 2>/dev/null
 
-# Получаем существующие цепочки
-declare -A EXISTING_CHAINS
-for chain in $(/usr/sbin/nft list table inet traffic 2>/dev/null | grep -oP 'chain traffic_(in|out)_\K[^ ]+' | sort -u); do
-    EXISTING_CHAINS["$chain"]=1
-done
-
-# Собираем нужные цепочки
-declare -A NEEDED_CHAINS
 for ip in "${!IP_TO_USER[@]}"; do
     user="${IP_TO_USER[$ip]}"
-    NEEDED_CHAINS["$user"]=1
-done
-
-# Удаляем лишние цепочки
-for chain in "${!EXISTING_CHAINS[@]}"; do
-    if [[ -z "${NEEDED_CHAINS[$chain]}" ]]; then
-        /usr/sbin/nft delete chain inet traffic "traffic_in_${chain}" 2>/dev/null
-        /usr/sbin/nft delete chain inet traffic "traffic_out_${chain}" 2>/dev/null
-    fi
-done
-
-# Создаём цепочки и правила для каждого пользователя
-declare -A USER_IPS
-for ip in "${!IP_TO_USER[@]}"; do
-    user="${IP_TO_USER[$ip]}"
-    USER_IPS["$user"]="${USER_IPS["$user"]} $ip"
-done
-
-for user in "${!USER_IPS[@]}"; do
-    chain_in="traffic_in_${user}"
-    chain_out="traffic_out_${user}"
-
-# Создаём цепочки если нет
-if ! /usr/sbin/nft list chain inet traffic "$chain_in" >/dev/null 2>&1; then
-    /usr/sbin/nft add chain inet traffic "$chain_in" '{ type filter hook input priority 0; policy accept; }'
-fi
-if ! /usr/sbin/nft list chain inet traffic "$chain_out" >/dev/null 2>&1; then
-    /usr/sbin/nft add chain inet traffic "$chain_out" '{ type filter hook output priority 0; policy accept; }'
-fi
-
-    # Очищаем старые правила
-    /usr/sbin/nft flush chain inet traffic "$chain_in" 2>/dev/null
-    /usr/sbin/nft flush chain inet traffic "$chain_out" 2>/dev/null
-
-    # Добавляем правила для каждого IP
-    for ip in ${USER_IPS["$user"]}; do
+    ip_clean="${ip//./_}"
+    chain_in="traffic_in_${user}_${ip_clean}"
+    chain_out="traffic_out_${user}_${ip_clean}"
+    
+    if ! /usr/sbin/nft list chain inet traffic "$chain_in" >/dev/null 2>&1; then
+        /usr/sbin/nft add chain inet traffic "$chain_in" '{ type filter hook input priority 0; policy accept; }'
         /usr/sbin/nft add rule inet traffic "$chain_in" ip saddr "$ip" counter
+    fi
+    
+    if ! /usr/sbin/nft list chain inet traffic "$chain_out" >/dev/null 2>&1; then
+        /usr/sbin/nft add chain inet traffic "$chain_out" '{ type filter hook output priority 0; policy accept; }'
         /usr/sbin/nft add rule inet traffic "$chain_out" ip daddr "$ip" counter
-    done
+    fi
 done
 
-# === СБОР СТАТИСТИКИ ===
-# Загружаем прошлое состояние
-declare -A PREV_UPLOAD
-declare -A PREV_DOWNLOAD
-if [[ -f "$STATE_FILE" ]]; then
-    while IFS=":" read -r user up down; do
-        PREV_UPLOAD["$user"]="$up"
-        PREV_DOWNLOAD["$user"]="$down"
-    done < "$STATE_FILE"
+# === 4. ЗАГРУЖАЕМ ПРОШЛЫЕ ПОКАЗАНИЯ NFT ===
+declare -A PREV_NFT_UP
+declare -A PREV_NFT_DOWN
+
+if [[ -f "$NFT_STATE_FILE" ]]; then
+    while IFS=':' read -r user up down; do
+        PREV_NFT_UP["$user"]="$up"
+        PREV_NFT_DOWN["$user"]="$down"
+    done < "$NFT_STATE_FILE"
 fi
 
-# Текущая статистика
-declare -A USER_UPLOAD
-declare -A USER_DOWNLOAD
+# === 5. ЗАГРУЖАЕМ ОБЩИЙ ТРАФИК ===
+declare -A TOTAL_UP
+declare -A TOTAL_DOWN
 
-# Исправленный парсинг bytes из nft
+if [[ -f "$TOTAL_STATE_FILE" ]]; then
+    while IFS=':' read -r user up down; do
+        TOTAL_UP["$user"]="$up"
+        TOTAL_DOWN["$user"]="$down"
+    done < "$TOTAL_STATE_FILE"
+fi
+
+# === 6. СБОР ТЕКУЩИХ ПОКАЗАНИЙ ИЗ NFT ===
+declare -A CURRENT_NFT_UP
+declare -A CURRENT_NFT_DOWN
+
 for ip in "${!IP_TO_USER[@]}"; do
     user="${IP_TO_USER[$ip]}"
-    chain_in="traffic_in_${user}"
-    chain_out="traffic_out_${user}"
-
-    upload=0
-    download=0
-
+    ip_clean="${ip//./_}"
+    chain_in="traffic_in_${user}_${ip_clean}"
+    chain_out="traffic_out_${user}_${ip_clean}"
+    
+    up=0
+    down=0
+    
     in_rule=$(/usr/sbin/nft list chain inet traffic "$chain_in" 2>/dev/null | grep "ip saddr $ip")
-    if [[ -n "$in_rule" ]]; then
-        if [[ "$in_rule" =~ bytes\ ([0-9]+) ]]; then
-            upload="${BASH_REMATCH[1]}"
-        fi
+    if [[ -n "$in_rule" && "$in_rule" =~ bytes\ ([0-9]+) ]]; then
+        up="${BASH_REMATCH[1]}"
     fi
-
+    
     out_rule=$(/usr/sbin/nft list chain inet traffic "$chain_out" 2>/dev/null | grep "ip daddr $ip")
-    if [[ -n "$out_rule" ]]; then
-        if [[ "$out_rule" =~ bytes\ ([0-9]+) ]]; then
-            download="${BASH_REMATCH[1]}"
-        fi
+    if [[ -n "$out_rule" && "$out_rule" =~ bytes\ ([0-9]+) ]]; then
+        down="${BASH_REMATCH[1]}"
     fi
-
-    USER_UPLOAD["$user"]=$(( ${USER_UPLOAD["$user"]:-0} + upload ))
-    USER_DOWNLOAD["$user"]=$(( ${USER_DOWNLOAD["$user"]:-0} + download ))
+    
+    CURRENT_NFT_UP["$user"]=$(( ${CURRENT_NFT_UP["$user"]:-0} + up ))
+    CURRENT_NFT_DOWN["$user"]=$(( ${CURRENT_NFT_DOWN["$user"]:-0} + down ))
 done
 
-# Суммируем с предыдущим состоянием
-for user in "${!USER_UPLOAD[@]}"; do
-    USER_UPLOAD["$user"]=$(( ${USER_UPLOAD["$user"]} + ${PREV_UPLOAD["$user"]:-0} ))
-    USER_DOWNLOAD["$user"]=$(( ${USER_DOWNLOAD["$user"]} + ${PREV_DOWNLOAD["$user"]:-0} ))
+# === 7. СЧИТАЕМ ПРИРОСТ И ОБНОВЛЯЕМ ОБЩИЙ ТРАФИК ===
+declare -A NEW_TOTAL_UP
+declare -A NEW_TOTAL_DOWN
+
+for user in "${!CURRENT_NFT_UP[@]}"; do
+    current_up="${CURRENT_NFT_UP[$user]}"
+    current_down="${CURRENT_NFT_DOWN[$user]}"
+    
+    prev_up="${PREV_NFT_UP[$user]:-0}"
+    prev_down="${PREV_NFT_DOWN[$user]:-0}"
+    
+    delta_up=$((current_up - prev_up))
+    delta_down=$((current_down - prev_down))
+    
+    # Защита от отрицательного прироста (если счётчик сбросился)
+    [[ $delta_up -lt 0 ]] && delta_up=$current_up
+    [[ $delta_down -lt 0 ]] && delta_down=$current_down
+    
+    old_total_up="${TOTAL_UP[$user]:-0}"
+    old_total_down="${TOTAL_DOWN[$user]:-0}"
+    
+    NEW_TOTAL_UP["$user"]=$((old_total_up + delta_up))
+    NEW_TOTAL_DOWN["$user"]=$((old_total_down + delta_down))
 done
 
-# Сохраняем состояние
-> "$STATE_FILE"
-for user in "${!USER_UPLOAD[@]}"; do
-    echo "$user:${USER_UPLOAD[$user]}:${USER_DOWNLOAD[$user]}" >> "$STATE_FILE"
+# === 8. СОХРАНЯЕМ СОСТОЯНИЯ ===
+> "$NFT_STATE_FILE"
+for user in "${!CURRENT_NFT_UP[@]}"; do
+    echo "$user:${CURRENT_NFT_UP[$user]}:${CURRENT_NFT_DOWN[$user]}" >> "$NFT_STATE_FILE"
 done
 
-# === ВЫВОД JSON ===
+> "$TOTAL_STATE_FILE"
+for user in "${!NEW_TOTAL_UP[@]}"; do
+    echo "$user:${NEW_TOTAL_UP[$user]}:${NEW_TOTAL_DOWN[$user]}" >> "$TOTAL_STATE_FILE"
+done
+
+# === 9. ВЫВОД JSON ===
 {
     echo "["
     first=true
-    for user in $(printf "%s\n" "${!USER_UPLOAD[@]}" | sort); do
-        total_up=${USER_UPLOAD[$user]}
-        total_down=${USER_DOWNLOAD[$user]}
-
+    for user in $(printf "%s\n" "${!NEW_TOTAL_UP[@]}" | sort); do
         if [ "$first" = true ]; then
             first=false
         else
             echo ","
         fi
-
         printf '{"user":"%s","upload":%s,"download":%s,"total":%s}' \
             "$user" \
-            "$total_up" \
-            "$total_down" \
-            "$((total_up + total_down))"
+            "${NEW_TOTAL_UP[$user]}" \
+            "${NEW_TOTAL_DOWN[$user]}" \
+            "$(( ${NEW_TOTAL_UP[$user]} + ${NEW_TOTAL_DOWN[$user]} ))"
     done
     echo
     echo "]"
 } > /opt/singbox-stats/traffic.json
 
+flock -u 200
+rm -f "$LOCK_FILE"
