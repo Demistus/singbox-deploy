@@ -129,8 +129,7 @@ def load_users_from_config() -> List[Dict[str, Any]]:
                 for user in inbound.get('users', []):
                     users.append({
                         'name': user.get('name'),
-                        'uuid': user.get('uuid'),
-                        'password': user.get('password', '')
+                        'uuid': user.get('uuid')
                     })
         logger.info(f"Загружено {len(users)} пользователей из конфига")
         return users
@@ -172,6 +171,7 @@ def save_users_to_config(users: List[Dict[str, Any]]) -> bool:
 def load_users() -> list:
     return load_users_from_config()
 
+
 def get_traffic_stats() -> List[Dict[str, Any]]:
     """Читает статистику из файла traffic.json"""
     stats_file = Path("/opt/singbox-stats/traffic.json")
@@ -184,6 +184,7 @@ def get_traffic_stats() -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Ошибка чтения статистики: {e}")
         return []
+
 
 def format_bytes(bytes_num: int) -> str:
     """Форматирование байтов в читаемый вид"""
@@ -204,8 +205,7 @@ def get_server_params() -> Dict[str, str]:
         'port': '443',
         'public_key': 'sGUInZ4epsI4uzQ9CKHWAzwIhG9Cy5P9KTAuzTVmfzg',
         'short_id': '',
-        'vless_sni': 'www.microsoft.com',
-        'hy2_sni': 'jacket.casacam.net'
+        'vless_sni': 'www.microsoft.com'
     }
     if Config.SINGBOX_CONFIG.exists():
         try:
@@ -223,7 +223,7 @@ def get_server_params() -> Dict[str, str]:
     return params
 
 
-def generate_client_config(username: str, user_uuid: str, password: str, platform: str = "android") -> Dict:
+def generate_client_config(username: str, user_uuid: str, platform: str = "android") -> Dict:
     params = get_server_params()
     dns_servers = [
         {"tag": "dns-direct", "server": "208.67.222.220", "server_port": 5353},
@@ -337,7 +337,7 @@ async def restart_singbox_server() -> bool:
 async def add_user_operation(user_info: Dict) -> tuple[bool, str]:
     try:
         users = load_users_from_config()
-        if any(u.get('name') == user_info['name'] for u in users):
+        if any(u.get('name').lower() == user_info['name'].lower() for u in users):
             return False, "Пользователь уже существует"
         users.append(user_info)
         if not save_users_to_config(users):
@@ -351,10 +351,10 @@ async def add_user_operation(user_info: Dict) -> tuple[bool, str]:
 async def remove_user_operation(username: str) -> tuple[bool, str]:
     try:
         users = load_users_from_config()
-        user_to_remove = next((u for u in users if u.get('name') == username), None)
+        user_to_remove = next((u for u in users if u.get('name').lower() == username.lower()), None)
         if not user_to_remove:
             return False, "Пользователь не найден"
-        users = [u for u in users if u.get('name') != username]
+        users = [u for u in users if u.get('name').lower() != username.lower()]
         if not save_users_to_config(users):
             return False, "Ошибка сохранения"
         await restart_singbox_server()
@@ -363,7 +363,7 @@ async def remove_user_operation(username: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-async def send_client_config_to_user(query, context, username, user_uuid, password):
+async def send_client_config_to_user(query, context, username, user_uuid):
     """Отправка конфига пользователю с кнопкой назад"""
     keyboard = [
         [InlineKeyboardButton("📱 Android", callback_data=f"config_android_{username}"),
@@ -375,13 +375,20 @@ async def send_client_config_to_user(query, context, username, user_uuid, passwo
     # Сохраняем информацию для возврата
     context.user_data['current_config_user'] = username
     context.user_data['current_config_uuid'] = user_uuid
-    context.user_data['current_config_password'] = password
     
-    await query.message.edit_text(
-        "📱 <b>Выберите вашу платформу:</b>",
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    try:
+        await query.message.edit_text(
+            "📱 <b>Выберите вашу платформу:</b>",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось отредактировать сообщение: {e}, отправляем новое")
+        await query.message.reply_text(
+            "📱 <b>Выберите вашу платформу:</b>",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 
 async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -392,14 +399,13 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
     platform, username = query.data.replace("config_", "").split("_", 1)
 
     users = load_users_from_config()
-    user = next((u for u in users if u.get('name') == username), None)
+    user = next((u for u in users if u.get('name').lower() == username.lower()), None)
     if not user:
         await query.message.edit_text("❌ Пользователь не найден", parse_mode='HTML')
         return
 
     user_uuid = user['uuid']
-    password = user['password']
-    client_config = generate_client_config(username, user_uuid, password, platform)
+    client_config = generate_client_config(username, user_uuid, platform)
 
     import time
     timestamp = int(time.time())
@@ -414,7 +420,7 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
             filename=f"{username}_singbox_{platform}_{timestamp}.json",
             caption=f"📱 <b>Конфиг для Sing-box</b>\n\n"
                     f"👤 <b>Имя:</b> {username}\n"
-                    f"🔑 <b>UUID:</b> <code>{user['uuid']}</code>\n"
+                    f"🔑 <b>UUID:</b> <code>{user['uuid']}</code>\n\n"
                     f"<b>⭐ Особенности версии:</b>\n"
                     f"• Российские сайты (Госуслуги, Сбер) пойдут через прямое подключение\n"
                     f"• Заблокированные сайты — через VPN\n\n"
@@ -461,11 +467,11 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
 
 async def send_existing_config(query, context, username):
     users = load_users_from_config()
-    user = next((u for u in users if u.get('name') == username), None)
+    user = next((u for u in users if u.get('name').lower() == username.lower()), None)
     if not user:
         await query.message.edit_text("❌ Конфиг не найден", parse_mode='HTML')
         return
-    await send_client_config_to_user(query, context, username, user['uuid'], user['password'])
+    await send_client_config_to_user(query, context, username, user['uuid'])
 
 
 async def show_menu(bot, chat_id: int, user_id: int):
@@ -554,7 +560,7 @@ async def create_my_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing_username = get_user_by_telegram_id(user_id)
     if existing_username:
         users = load_users_from_config()
-        existing_user = next((u for u in users if u.get('name') == existing_username), None)
+        existing_user = next((u for u in users if u.get('name').lower() == existing_username.lower()), None)
         if existing_user:
             await send_existing_config(query, context, existing_username)
             return
@@ -564,13 +570,12 @@ async def create_my_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = load_users_from_config()
     base_username = username
     counter = 1
-    while any(u.get('name') == username for u in users):
+    while any(u.get('name').lower() == username.lower() for u in users):
         username = f"{base_username}_{counter}"
         counter += 1
 
     user_uuid = str(uuid.uuid4())
-    password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
-    user_info = {'name': username, 'uuid': user_uuid, 'password': password}
+    user_info = {'name': username, 'uuid': user_uuid}
 
     status_msg = await query.message.reply_text("🔄 <b>Создаем конфиг...</b>", parse_mode='HTML')
     success, error_msg = await add_user_operation(user_info)
@@ -581,7 +586,7 @@ async def create_my_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await restart_singbox_server()
     save_user_mapping(user_id, username)
     await status_msg.delete()
-    await send_client_config_to_user(query, context, username, user_uuid, password)
+    await send_client_config_to_user(query, context, username, user_uuid)
     context.user_data.clear()
 
 
@@ -611,7 +616,7 @@ async def show_user_configs(update_obj):
         filtered_users = users
     else:
         user_name = get_user_by_telegram_id(user_id)
-        filtered_users = [u for u in users if u.get('name') == user_name] if user_name else []
+        filtered_users = [u for u in users if u.get('name').lower() == user_name.lower()] if user_name else []
 
     # Если нет конфигов, показываем кнопку создания
     if not filtered_users:
@@ -639,15 +644,15 @@ async def send_user_config(query, username, context):
     is_admin = user_id in Config.ADMIN_IDS
     if not is_admin:
         user_name = get_user_by_telegram_id(user_id)
-        if user_name != username:
+        if user_name.lower() != username.lower():
             await query.message.edit_text("❌ Доступ запрещен", parse_mode='HTML')
             return
     users = load_users_from_config()
-    user = next((u for u in users if u.get('name') == username), None)
+    user = next((u for u in users if u.get('name').lower() == username.lower()), None)
     if not user:
         await query.message.edit_text("❌ Пользователь не найден", parse_mode='HTML')
         return
-    await send_client_config_to_user(query, context, username, user['uuid'], user['password'])
+    await send_client_config_to_user(query, context, username, user['uuid'])
 
 
 async def show_server_info(update):
@@ -720,7 +725,7 @@ async def show_my_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
         return
 
     stats = get_traffic_stats()
-    user_stats = next((s for s in stats if s.get('user') == username), None)
+    user_stats = next((s for s in stats if s.get('user', '').lower() == username.lower()), None)
 
     if user_stats:
         upload = user_stats.get('upload', 0)
@@ -768,6 +773,7 @@ async def show_total_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
     )
 
+
 async def add_user_start(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         await update.callback_query.answer("❌ Доступ запрещен", show_alert=True)
@@ -788,12 +794,11 @@ async def add_user_name(update, context):
         await update.message.reply_text("❌ Некорректное имя! Попробуйте еще раз:")
         return NAME
     users = load_users_from_config()
-    if any(u.get('name') == username for u in users):
+    if any(u.get('name').lower() == username.lower() for u in users):
         await update.message.reply_text(f"❌ Пользователь {username} уже существует!")
         return NAME
     user_uuid = str(uuid.uuid4())
-    password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
-    context.user_data['new_user'] = {'name': username, 'uuid': user_uuid, 'password': password}
+    context.user_data['new_user'] = {'name': username, 'uuid': user_uuid}
     keyboard = [[InlineKeyboardButton("✅ Да", callback_data="confirm_add"), InlineKeyboardButton("❌ Нет", callback_data="cancel_add")]]
     await update.message.reply_text(
         f"📝 <b>Подтвердите:</b>\n👤 {username}\n🔑 <code>{user_uuid}</code>\n\nДобавить?",
@@ -821,24 +826,54 @@ async def confirm_add_user(update, context):
             await bot.delete_message(chat_id=chat_id, message_id=context.user_data['menu_message_id'])
         except:
             pass
+    
     status_msg = await bot.send_message(chat_id=chat_id, text=f"🔄 <b>Добавляем {username}...</b>", parse_mode='HTML')
     success, error_msg = await add_user_operation(user_info)
     if not success:
         await status_msg.edit_text(f"❌ <b>Ошибка:</b>\n<code>{error_msg}</code>", parse_mode='HTML')
         return ConversationHandler.END
+    
     await restart_singbox_server()
     await status_msg.delete()
     await bot.send_message(chat_id=chat_id, text=f"✅ <b>Пользователь {username} добавлен!</b>", parse_mode='HTML')
 
-    # Создаем фейковый query для отправки конфига
+    # Отправляем конфиг новым сообщением
+    new_message = await bot.send_message(chat_id=chat_id, text="📱 <b>Подготовка конфига...</b>", parse_mode='HTML')
+    
+    # Создаем класс-заглушку с актуальным сообщением
+    class FakeMessage:
+        def __init__(self, message):
+            self.message_id = message.message_id
+            self.chat_id = message.chat_id
+            self.chat = message.chat
+        
+        async def edit_text(self, text, parse_mode=None, reply_markup=None):
+            return await bot.edit_message_text(
+                text=text,
+                chat_id=self.chat_id,
+                message_id=self.message_id,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup
+            )
+        
+        async def reply_text(self, text, parse_mode=None, reply_markup=None):
+            return await bot.send_message(
+                chat_id=self.chat_id,
+                text=text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup
+            )
+    
     class FakeQuery:
         def __init__(self, message):
             self.message = message
         async def answer(self):
             pass
-
-    fake_query = FakeQuery(query.message)
-    await send_client_config_to_user(fake_query, context, username, user_info['uuid'], user_info['password'])
+    
+    fake_message = FakeMessage(new_message)
+    fake_query = FakeQuery(fake_message)
+    
+    await send_client_config_to_user(fake_query, context, username, user_info['uuid'])
     return ConversationHandler.END
 
 
@@ -878,7 +913,7 @@ async def perform_delete_user(update, context):
             with open(USER_MAPPING_FILE, 'r') as f:
                 mapping = json.load(f)
             for uid, uname in mapping.items():
-                if uname == username:
+                if uname.lower() == username.lower():
                     user_id = int(uid)
                     break
     except:
