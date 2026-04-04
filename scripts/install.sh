@@ -153,6 +153,8 @@ chmod +x /opt/singbox-deploy/scripts/uninstall-singbox.sh
 
 # 13. Запуск контейнеров
 echo "Запуск контейнеров (сборка может занять до 10 минут)..."
+docker build --network host -f docker/Dockerfile.singbox -t singbox-deploy-sing-box .
+docker build --network host -f docker/Dockerfile.bot -t singbox-deploy-bot .
 docker-compose up -d
 
 echo ""
