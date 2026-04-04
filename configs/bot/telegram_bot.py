@@ -301,11 +301,6 @@ def generate_vless_link(username: str, user_uuid: str) -> str:
             f"&fp=chrome#{username}")
 
 
-#def generate_hysteria_link(username: str, password: str) -> str:
-#    params = get_server_params()
-#    return f"hysteria2://{password}@{params['domain']}:8443?insecure=0&sni={params['hy2_sni']}#{username}"
-
-
 def generate_qr_code(data: str) -> BytesIO:
     qr = qrcode.QRCode(version=1, box_size=6, border=2)
     qr.add_data(data)
@@ -369,12 +364,20 @@ async def remove_user_operation(username: str) -> tuple[bool, str]:
 
 
 async def send_client_config_to_user(query, context, username, user_uuid, password):
+    """Отправка конфига пользователю с кнопкой назад"""
     keyboard = [
         [InlineKeyboardButton("📱 Android", callback_data=f"config_android_{username}"),
-         InlineKeyboardButton("🍎 iOS", callback_data=f"config_ios_{username}")]
+         InlineKeyboardButton("🍎 iOS", callback_data=f"config_ios_{username}")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_menu")]
     ]
     context.user_data['waiting_for_platform'] = True
-    await query.message.reply_text(
+    
+    # Сохраняем информацию для возврата
+    context.user_data['current_config_user'] = username
+    context.user_data['current_config_uuid'] = user_uuid
+    context.user_data['current_config_password'] = password
+    
+    await query.message.edit_text(
         "📱 <b>Выберите вашу платформу:</b>",
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -412,7 +415,6 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
             caption=f"📱 <b>Конфиг для Sing-box</b>\n\n"
                     f"👤 <b>Имя:</b> {username}\n"
                     f"🔑 <b>UUID:</b> <code>{user['uuid']}</code>\n"
-                    f"🔑 <b>Пароль:</b> <code>{user['password']}</code>\n\n"
                     f"<b>⭐ Особенности версии:</b>\n"
                     f"• Российские сайты (Госуслуги, Сбер) пойдут через прямое подключение\n"
                     f"• Заблокированные сайты — через VPN\n\n"
@@ -423,12 +425,11 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
                     f"   https://apps.apple.com/ru/app/sing-box-vt/id6673731168\n"
                     f"3. В приложении нажмите '+' → 'Import from file'\n"
                     f"4. Выберите этот сохраненный файл\n"
-                    f"5. Нажмите для подключения \u25BA",
+                    f"5. Нажмите для подключения кнопку ▶️",
             parse_mode='HTML'
         )
 
     vless_qr = generate_qr_code(generate_vless_link(username, user_uuid))
-#    hysteria_qr = generate_qr_code(generate_hysteria_link(username, password))
 
     await bot.send_photo(chat_id=chat_id, photo=vless_qr,
                          caption=f"📱 <b>QR-код VLESS</b> для {username}\n\n"
@@ -436,19 +437,26 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
                               f"• Весь трафик проходит через VPN\n"
                               f"• Для доступа к Госуслугам и банкам потребуется отключить VPN вручную\n\n"
                               f"<b>Как подключиться через Hupp:</b>\n"
-                              f"1. Установите Hupp из магазина приложений:\n"
+                              f"1. Сохраните этот QR-код в галерею\n"
+                              f"2. Установите Hupp из магазина приложений:\n"
                               f"   • Android: https://play.google.com/store/apps/details?id=com.happproxy\n"
                               f"   • iPhone: https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973\n"
-                              f"2. В приложении нажмите '+' → 'Сканировать QR код'\n"
-                              f"3. Отсканируйте этот QR-код\n"
-                              f"4. Нажмите для подключения на центральную кнопку \u23FB",
+                              f"3. В приложении нажмите '+' → 'Сканировать QR код'\n"
+                              f"4. Выберите из галереи и отсканируйте сохраненный QR-код\n"
+                              f"5. Нажмите для подключения на центральную кнопку ⏻",
                          parse_mode='HTML')
-                         
- #   await bot.send_photo(chat_id=chat_id, photo=hysteria_qr,
- #                        caption=f"📱 <b>QR-код Hysteria2</b> для {username}", parse_mode='HTML')
 
     send_file.unlink()
     context.user_data.pop('waiting_for_platform', None)
+    
+    # Отправляем кнопку назад после выдачи конфигов
+    keyboard = [[InlineKeyboardButton("🔙 Вернуться в меню", callback_data="back_to_menu")]]
+    await bot.send_message(
+        chat_id=chat_id,
+        text="✅ <b>Конфиги успешно отправлены!</b>\n\nВыберите действие:",
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 async def send_existing_config(query, context, username):
@@ -512,20 +520,26 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Sing-box (iPhone): https://apps.apple.com/ru/app/sing-box-vt/id6673731168\n"
         "3. В приложении нажмите '+' → 'Import from file'\n"
         "4. Выберите скачанный JSON файл\n"
-        "5. Нажмите для подключения \u25BA\n\n"
+        "5. Нажмите для подключения кнопку ▶️\n\n"
         "<b>📱 Как подключиться через Hupp (альтернатива):</b>\n"
         "1. Установите Hupp из магазина приложений\n"
         "• Hupp (Android): https://play.google.com/store/apps/details?id=com.happproxy\n"
         "• Hupp (iPhone): https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973\n"
         "2. В приложении нажмите '+' → 'Сканировать QR код'\n"
-        "3. Отсканируйте сгенерированный для Вас QR-код\n"
-        "4. Нажмите для подключения на центральную кнопку \u23FB\n\n"
+        "3. Выберите из галереи и отсканируйте сохраненный QR-код\n"
+        "4. Нажмите для подключения на центральную кнопку ⏻\n\n"
         "<b>🔧 Команды:</b>\n"
         "/start - Начать работу\n"
         "/menu - Главное меню\n"
         "/help - Эта справка"
     )
-    await update.message.reply_text(help_text, parse_mode='HTML')
+    
+    if hasattr(update, 'callback_query'):
+        query = update.callback_query
+        await query.message.edit_text(help_text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
+        await query.answer()
+    else:
+        await update.message.reply_text(help_text, parse_mode='HTML')
 
 
 async def create_my_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -575,17 +589,20 @@ async def show_user_configs(update_obj):
     if hasattr(update_obj, 'callback_query'):
         query = update_obj.callback_query
         chat_id = query.message.chat.id
-        is_admin = chat_id in Config.ADMIN_IDS
+        user_id = query.from_user.id
+        is_admin = user_id in Config.ADMIN_IDS
         edit_func = query.edit_message_text
         answer_func = query.answer
     elif hasattr(update_obj, 'message') and hasattr(update_obj, 'edit_message_text'):
         chat_id = update_obj.message.chat.id
-        is_admin = chat_id in Config.ADMIN_IDS
+        user_id = update_obj.message.chat.id
+        is_admin = user_id in Config.ADMIN_IDS
         edit_func = update_obj.edit_message_text
         answer_func = update_obj.answer
     else:
         chat_id = update_obj.chat.id
-        is_admin = chat_id in Config.ADMIN_IDS
+        user_id = update_obj.chat.id
+        is_admin = user_id in Config.ADMIN_IDS
         edit_func = update_obj.reply_text
         answer_func = None
 
@@ -593,12 +610,18 @@ async def show_user_configs(update_obj):
     if is_admin:
         filtered_users = users
     else:
-        user_name = get_user_by_telegram_id(chat_id)
+        user_name = get_user_by_telegram_id(user_id)
         filtered_users = [u for u in users if u.get('name') == user_name] if user_name else []
 
+    # Если нет конфигов, показываем кнопку создания
     if not filtered_users:
-        keyboard = [[InlineKeyboardButton("🔑 Создать мой конфиг", callback_data="create_my_config")]]
-        await edit_func("❌ Нет конфигов", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard = [
+            [InlineKeyboardButton("🔑 Создать мой конфиг", callback_data="create_my_config")],
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_menu")]
+        ]
+        await edit_func("❌ У вас нет активных конфигов.\n\nНажмите кнопку ниже, чтобы создать:", 
+                       parse_mode='HTML', 
+                       reply_markup=InlineKeyboardMarkup(keyboard))
         if answer_func:
             await answer_func()
         return
@@ -646,7 +669,29 @@ async def show_server_info(update):
 
 
 async def show_help(update):
-    help_text = "❓ <b>Помощь</b>\n\n<b>📱 Как подключиться:</b>\n1. Скачайте JSON конфиг\n2. Импортируйте в Sing-box"
+    help_text = (
+        "❓ <b>Помощь и инструкция</b>\n\n"
+        "<b>📱 Как подключиться через Sing-box:</b>\n"
+        "1. Скачайте сгенерированный для Вас JSON конфиг\n"
+        "2. Установите Sing-box из магазина приложений\n"
+        "• Sing-box (Android): https://play.google.com/store/apps/details?id=io.nekohasekai.sfa\n"
+        "• Sing-box (iPhone): https://apps.apple.com/ru/app/sing-box-vt/id6673731168\n"
+        "3. В приложении нажмите '+' → 'Import from file'\n"
+        "4. Выберите скачанный JSON файл\n"
+        "5. Нажмите для подключения кнопку ▶️\n\n"
+        "<b>📱 Как подключиться через Hupp (альтернатива):</b>\n"
+        "1. Установите Hupp из магазина приложений\n"
+        "• Hupp (Android): https://play.google.com/store/apps/details?id=com.happproxy\n"
+        "• Hupp (iPhone): https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973\n"
+        "2. В приложении нажмите '+' → 'Сканировать QR код'\n"
+        "3. Выберите из галереи и отсканируйте сохраненный QR-код\n"
+        "4. Нажмите для подключения на центральную кнопку ⏻\n\n"
+        "<b>🔧 Команды:</b>\n"
+        "/start - Начать работу\n"
+        "/menu - Главное меню\n"
+        "/help - Эта справка"
+    )
+        
     if hasattr(update, 'callback_query'):
         query = update.callback_query
         await query.message.edit_text(help_text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
@@ -660,8 +705,18 @@ async def show_my_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
     await query.answer()
 
     username = get_user_by_telegram_id(user_id)
+    
+    # Если нет активного конфига, показываем кнопку создания
     if not username:
-        await query.message.edit_text("❌ Нет активного конфига", parse_mode='HTML')
+        keyboard = [
+            [InlineKeyboardButton("🔑 Создать мой конфиг", callback_data="create_my_config")],
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_menu")]
+        ]
+        await query.message.edit_text(
+            "❌ У вас нет активного конфига.\n\nНажмите кнопку ниже, чтобы создать:", 
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return
 
     stats = get_traffic_stats()
@@ -741,7 +796,7 @@ async def add_user_name(update, context):
     context.user_data['new_user'] = {'name': username, 'uuid': user_uuid, 'password': password}
     keyboard = [[InlineKeyboardButton("✅ Да", callback_data="confirm_add"), InlineKeyboardButton("❌ Нет", callback_data="cancel_add")]]
     await update.message.reply_text(
-        f"📝 <b>Подтвердите:</b>\n👤 {username}\n🔑 <code>{user_uuid}</code>\n🔐 <code>{password}</code>\n\nДобавить?",
+        f"📝 <b>Подтвердите:</b>\n👤 {username}\n🔑 <code>{user_uuid}</code>\n\nДобавить?",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return CONFIRM
