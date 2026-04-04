@@ -166,6 +166,5 @@ echo "║  📊 Статистика:     /opt/singbox-stats/traffic.json       
 echo "║  🔥 Firewall:       /etc/nftables.conf                       ║"
 echo "║  🤖 Бот:            docker logs telegram-bot                 ║"
 echo "║  ✅ Статистика обновляется каждые 5 минут                    ║"
-echo "║  📅 Дневной снимок: 00:00                                    ║"
 echo "║  🧹 Удаление:/opt/singbox-deploy/scripts/uninstall-singbox.sh║"
 echo "╚══════════════════════════════════════════════════════════════╝"
