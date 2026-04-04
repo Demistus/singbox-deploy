@@ -540,7 +540,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - Эта справка"
     )
     
-    if hasattr(update, 'callback_query'):
+    if update.callback_query:
         query = update.callback_query
         await query.message.edit_text(help_text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
         await query.answer()
