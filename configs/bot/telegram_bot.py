@@ -301,9 +301,9 @@ def generate_vless_link(username: str, user_uuid: str) -> str:
             f"&fp=chrome#{username}")
 
 
-def generate_hysteria_link(username: str, password: str) -> str:
-    params = get_server_params()
-    return f"hysteria2://{password}@{params['domain']}:8443?insecure=0&sni={params['hy2_sni']}#{username}"
+#def generate_hysteria_link(username: str, password: str) -> str:
+#    params = get_server_params()
+#    return f"hysteria2://{password}@{params['domain']}:8443?insecure=0&sni={params['hy2_sni']}#{username}"
 
 
 def generate_qr_code(data: str) -> BytesIO:
@@ -411,26 +411,41 @@ async def send_config_by_platform(update: Update, context: ContextTypes.DEFAULT_
             filename=f"{username}_singbox_{platform}_{timestamp}.json",
             caption=f"📱 <b>Конфиг для Sing-box</b>\n\n"
                     f"👤 <b>Имя:</b> {username}\n"
-                    f"🔑 <b>UUID:</b> <code>{user_uuid}</code>\n"
-                    f"🔑 <b>Пароль:</b> <code>{password}</code>\n\n"
-                    f"<b>⭐ Особенности:</b>\n"
-                    f"• Российские сайты (.ru) — прямое подключение\n"
+                    f"🔑 <b>UUID:</b> <code>{user['uuid']}</code>\n"
+                    f"🔑 <b>Пароль:</b> <code>{user['password']}</code>\n\n"
+                    f"<b>⭐ Особенности версии:</b>\n"
+                    f"• Российские сайты (Госуслуги, Сбер) пойдут через прямое подключение\n"
                     f"• Заблокированные сайты — через VPN\n\n"
                     f"<b>📱 Как подключиться:</b>\n"
-                    f"1. Сохраните файл\n"
-                    f"2. Установите Sing-box\n"
-                    f"3. Импортируйте файл\n"
-                    f"4. Нажмите для подключения",
+                    f"1. Сохраните этот файл\n"
+                    f"2. Установите Sing-box из магазина приложений:\n"
+                    f"   https://play.google.com/store/apps/details?id=io.nekohasekai.sfa\n"
+                    f"   https://apps.apple.com/ru/app/sing-box-vt/id6673731168\n"
+                    f"3. В приложении нажмите '+' → 'Import from file'\n"
+                    f"4. Выберите этот сохраненный файл\n"
+                    f"5. Нажмите для подключения \u25BA",
             parse_mode='HTML'
         )
 
     vless_qr = generate_qr_code(generate_vless_link(username, user_uuid))
-    hysteria_qr = generate_qr_code(generate_hysteria_link(username, password))
+#    hysteria_qr = generate_qr_code(generate_hysteria_link(username, password))
 
     await bot.send_photo(chat_id=chat_id, photo=vless_qr,
-                         caption=f"📱 <b>QR-код VLESS</b> для {username}", parse_mode='HTML')
-    await bot.send_photo(chat_id=chat_id, photo=hysteria_qr,
-                         caption=f"📱 <b>QR-код Hysteria2</b> для {username}", parse_mode='HTML')
+                         caption=f"📱 <b>QR-код VLESS</b> для {username}\n\n"
+                              f"<b>📱 Альтернативный клиент — Hupp:</b>\n"
+                              f"• Весь трафик проходит через VPN\n"
+                              f"• Для доступа к Госуслугам и банкам потребуется отключить VPN вручную\n\n"
+                              f"<b>Как подключиться через Hupp:</b>\n"
+                              f"1. Установите Hupp из магазина приложений:\n"
+                              f"   • Android: https://play.google.com/store/apps/details?id=com.happproxy\n"
+                              f"   • iPhone: https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973\n"
+                              f"2. В приложении нажмите '+' → 'Сканировать QR код'\n"
+                              f"3. Отсканируйте этот QR-код\n"
+                              f"4. Нажмите для подключения на центральную кнопку \u23FB",
+                         parse_mode='HTML')
+                         
+ #   await bot.send_photo(chat_id=chat_id, photo=hysteria_qr,
+ #                        caption=f"📱 <b>QR-код Hysteria2</b> для {username}", parse_mode='HTML')
 
     send_file.unlink()
     context.user_data.pop('waiting_for_platform', None)
@@ -489,14 +504,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "❓ <b>Помощь</b>\n\n"
-        "<b>📱 Как подключиться:</b>\n"
-        "1. Скачайте JSON конфиг\n"
-        "2. Установите Sing-box\n"
-        "3. Импортируйте файл\n"
-        "4. Нажмите для подключения\n\n"
+        "❓ <b>Помощь и инструкция</b>\n\n"
+        "<b>📱 Как подключиться через Sing-box:</b>\n"
+        "1. Скачайте сгенерированный для Вас JSON конфиг\n"
+        "2. Установите Sing-box из магазина приложений\n"
+        "• Sing-box (Android): https://play.google.com/store/apps/details?id=io.nekohasekai.sfa\n"
+        "• Sing-box (iPhone): https://apps.apple.com/ru/app/sing-box-vt/id6673731168\n"
+        "3. В приложении нажмите '+' → 'Import from file'\n"
+        "4. Выберите скачанный JSON файл\n"
+        "5. Нажмите для подключения \u25BA\n\n"
+        "<b>📱 Как подключиться через Hupp (альтернатива):</b>\n"
+        "1. Установите Hupp из магазина приложений\n"
+        "• Hupp (Android): https://play.google.com/store/apps/details?id=com.happproxy\n"
+        "• Hupp (iPhone): https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973\n"
+        "2. В приложении нажмите '+' → 'Сканировать QR код'\n"
+        "3. Отсканируйте сгенерированный для Вас QR-код\n"
+        "4. Нажмите для подключения на центральную кнопку \u23FB\n\n"
         "<b>🔧 Команды:</b>\n"
-        "/start - Главное меню\n"
+        "/start - Начать работу\n"
+        "/menu - Главное меню\n"
         "/help - Эта справка"
     )
     await update.message.reply_text(help_text, parse_mode='HTML')
@@ -654,7 +680,7 @@ async def show_my_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
     else:
         text = f"📊 <b>Ваш трафик</b>\n\n👤 {username}\nНет данных"
 
-    await query.message.edit_text(text, parse_mode='HTML')
+    await query.message.edit_text(help_text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
 
 async def show_total_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику всех пользователей (только для админов)"""
@@ -677,7 +703,7 @@ async def show_total_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT
         text += f"  📤 Отправлено: {format_bytes(s.get('upload', 0))}\n"
         text += f"  📊 Всего: {format_bytes(s.get('total', 0))}\n\n"
 
-    await query.message.edit_text(text, parse_mode='HTML')
+    await query.message.edit_text(help_text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
 
 async def add_user_start(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -901,4 +927,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
