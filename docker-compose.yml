@@ -1,6 +1,8 @@
 services:
   sing-box:
-    image: ghcr.io/demistus/singbox-deploy/sing-box:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.singbox
     container_name: sing-box
     restart: unless-stopped
     network_mode: host
@@ -13,7 +15,9 @@ services:
       - /dev/net/tun:/dev/net/tun
 
   bot:
-    image: ghcr.io/demistus/singbox-deploy/bot:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
     container_name: telegram-bot
     restart: unless-stopped
     network_mode: host
@@ -27,4 +31,3 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - sing-box
-
