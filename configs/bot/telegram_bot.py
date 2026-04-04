@@ -680,10 +680,14 @@ async def show_my_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
     else:
         text = f"📊 <b>Ваш трафик</b>\n\n👤 {username}\nНет данных"
 
-    await query.message.edit_text(help_text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
+    await query.message.edit_text(
+        text, 
+        parse_mode='HTML', 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
+    )
+
 
 async def show_total_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает статистику всех пользователей (только для админов)"""
     user_id = query.from_user.id
     await query.answer()
 
@@ -703,7 +707,11 @@ async def show_total_traffic(query: CallbackQuery, context: ContextTypes.DEFAULT
         text += f"  📤 Отправлено: {format_bytes(s.get('upload', 0))}\n"
         text += f"  📊 Всего: {format_bytes(s.get('total', 0))}\n\n"
 
-    await query.message.edit_text(help_text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
+    await query.message.edit_text(
+        text, 
+        parse_mode='HTML', 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]])
+    )
 
 async def add_user_start(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
